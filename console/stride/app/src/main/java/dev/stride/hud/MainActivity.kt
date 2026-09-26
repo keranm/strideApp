@@ -1727,6 +1727,7 @@ class MainActivity : Activity() {
      * step goes straight to zero rather than trying to hold 1.5 km/h. Reaching
      * the floor commands the stop: a wind-down is only ever the approach to one.
      */
+
     private fun decelStep(): Map<FitPro.Field, Double>? {
         if (!stopping) return null
         val step = stopRate * POLL_MS / 1000.0
@@ -1736,22 +1737,21 @@ class MainActivity : Activity() {
             rampTo = 0.0
             rampReason = ""
             targetKph = 0.0
-            // "Commanded zero", not "stopped". The belt takes a moment to come
-            // to rest, and the write that tells it to may not even arrive —
-            // see enforceStopped, which is what actually finishes the job.
             Log.i(TAG, "wind-down complete — commanding stop")
-            // A workout that ended while the belt was still easing down left
-            // its tidy-up to us — see finishWorkout. It goes out behind the
-            // stop, never in front of it.
             if (session == Session.SUMMARY) parkDeckAndFan()
-            return mapOf(
+            // Queued rather than returned directly: a one-shot write here can be
+            // dropped by the board like any other frame, and nothing would ever
+            // resend it — see the pendingWrite retry-until-landed logic in
+            // pollLoop for why a stop command specifically must not be fire-and-forget.
+            pendingWrite = mapOf(
                 FitPro.Field.KPH to 0.0,
                 FitPro.Field.WORKOUT_MODE to FitPro.Mode.PAUSE.toDouble(),
             )
+            return null
         }
         return mapOf(FitPro.Field.KPH to targetKph)
     }
-
+    
     /**
      * The belt must not be moving unless a workout is.
      *

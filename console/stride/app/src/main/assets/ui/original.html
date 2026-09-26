@@ -948,7 +948,7 @@ tap($('btnStart'), () => {
     case 'warmup':   Stride.skipWarmup();  break;
     case 'cooldown': Stride.skipCooldown(); break;
     case 'paused':   Stride.resume();      break;
-    case 'running':  Stride.pause();       break;
+    case 'running':  Stride.end();       break;  // was Stride.pause()
   }
   ack($('btnStart'));
 });
@@ -1522,19 +1522,19 @@ window.render = function(s){
   if (mode === 'summary'){ renderSummary(s); return; }
   if (mode === 'welcome') return;
 
-  $('speed').textContent   = (s.speed ?? 0).toFixed(1);
-  $('incline').textContent = (s.incline ?? 0).toFixed(1);
-  $('speedTarget').textContent   = (s.targetSpeed ?? 0).toFixed(1);
-  $('inclineTarget').textContent = (s.targetIncline ?? 0).toFixed(1);
+  $('speed').textContent   = ((s.speed != null ? s.speed : 0)).toFixed(1);
+  $('incline').textContent = ((s.incline != null ? s.incline : 0)).toFixed(1);
+  $('speedTarget').textContent   = ((s.targetSpeed != null ? s.targetSpeed : 0)).toFixed(1);
+  $('inclineTarget').textContent = ((s.targetIncline != null ? s.targetIncline : 0)).toFixed(1);
 
-  $('elapsed').textContent  = mmss(s.elapsed ?? 0);
-  $('distance').textContent = nf(s.distance ?? 0);
-  $('calories').textContent = nf(s.calories ?? 0);
+  $('elapsed').textContent  = mmss((s.elapsed != null ? s.elapsed : 0));
+  $('distance').textContent = nf((s.distance != null ? s.distance : 0));
+  $('calories').textContent = nf((s.calories != null ? s.calories : 0));
   $('pulse').textContent    = s.pulse ? s.pulse : '—';
 
   // 0..19 km/h and -3..+12 % mapped onto 10 ticks each
-  ticks($('speedTicks'),   10, Math.round((s.speed ?? 0) / 19 * 10));
-  ticks($('inclineTicks'), 10, Math.round((((s.incline ?? 0) + 3) / 15) * 10));
+  ticks($('speedTicks'),   10, Math.round(((s.speed != null ? s.speed : 0)) / 19 * 10));
+  ticks($('inclineTicks'), 10, Math.round(((((s.incline != null ? s.incline : 0)) + 3) / 15) * 10));
 
   // The chip says what you're *doing*. "running" is the internal name of the
   // active session state, which read as wrong on every walk. Colour still keys
@@ -1547,15 +1547,15 @@ window.render = function(s){
     : mode;
   modeEl.dataset.mode = mode;
 
-  const fan = s.fan ?? 0;
+  const fan = (s.fan != null ? s.fan : 0);
   $('btnFan').textContent = fan ? 'FAN ' + ['','I','II','III','A'][fan] : 'FAN';
   [...$('fanmenu').querySelectorAll('button')]
     .forEach(b => b.classList.toggle('on', parseInt(b.dataset.fan, 10) === fan));
 
   if (mode === 'paused'){
-    const where = [mmss(s.elapsed ?? 0) + ' in'];
+    const where = [mmss((s.elapsed != null ? s.elapsed : 0)) + ' in'];
     if (s.segments) where.push(`${s.segmentLabel || 'segment ' + s.segment} · ${s.segment} of ${s.segments}`);
-    else where.push(nf(s.distance ?? 0) + ' m');
+    else where.push(nf((s.distance != null ? s.distance : 0)) + ' m');
     where.push('the belt has stopped');
     $('pausedWhere').textContent = where.join(' · ');
   }
@@ -1565,7 +1565,7 @@ window.render = function(s){
   btn.textContent = mode === 'warmup'   ? 'SKIP'
                   : mode === 'cooldown' ? 'SKIP'
                   : mode === 'paused'   ? 'RESUME'
-                  : 'PAUSE';
+                  : 'COOLDOWN'; // was 'PAUSE' 
   btn.classList.toggle('active', mode === 'running');
   $('btnStop').classList.toggle('muted', mode === 'cooldown');
   $('btnSpeedUp').classList.toggle('muted', !moving);
@@ -1589,7 +1589,7 @@ window.render = function(s){
   if (!timed && !guided) {
     // Dot travels the current lap; the arc behind it is the lap just finished,
     // shrinking as the new one grows, so the line is never absent.
-    const dist = s.distance ?? 0;
+    const dist = (s.distance != null ? s.distance : 0);
     const laps = TRACK.laps(dist);
     const frac = TRACK.lapFraction(dist);
     $('lap').textContent = laps;
@@ -1651,7 +1651,7 @@ window.render = function(s){
   }
   if (timed){
     const total = 120;                       // WARMUP_MS / COOLDOWN_MS
-    const left = s.phaseLeft ?? 0;
+    const left = (s.phaseLeft != null ? s.phaseLeft : 0);
     $('phase').dataset.kind = mode;
     $('phaseName').textContent  = mode === 'warmup' ? 'Warm up' : 'Cool down';
     $('phaseClock').textContent = mmss(left);
@@ -1678,12 +1678,12 @@ function renderSummary(s){
   $('sumHead').textContent = walker ? ('Nice work, ' + walker) : 'Nice work';
   $('sumCoach').textContent = s.summaryLine || '';
   $('sumSub').textContent  = kind + ' complete';
-  $('sumTime').textContent = mmss(s.elapsed ?? 0);
-  $('sumDist').textContent = nf(s.distance ?? 0);
-  $('sumCal').textContent  = nf(s.calories ?? 0);
-  $('sumAvg').textContent  = (s.avgSpeed ?? 0).toFixed(1);
-  $('sumMax').textContent  = (s.maxSpeed ?? 0).toFixed(1);
-  $('sumInc').textContent  = (s.avgIncline ?? 0).toFixed(1);
+  $('sumTime').textContent = mmss((s.elapsed != null ? s.elapsed : 0));
+  $('sumDist').textContent = nf((s.distance != null ? s.distance : 0));
+  $('sumCal').textContent  = nf((s.calories != null ? s.calories : 0));
+  $('sumAvg').textContent  = ((s.avgSpeed != null ? s.avgSpeed : 0)).toFixed(1);
+  $('sumMax').textContent  = ((s.maxSpeed != null ? s.maxSpeed : 0)).toFixed(1);
+  $('sumInc').textContent  = ((s.avgIncline != null ? s.avgIncline : 0)).toFixed(1);
 }
 
 /* --- clock --------------------------------------------------------------- */

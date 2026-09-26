@@ -823,7 +823,7 @@ tap($('btnLead'), () => {
     case 'warmup':   Stride.skipWarmup();   break;
     case 'cooldown': Stride.skipCooldown(); break;
     case 'paused':   Stride.resume();       break;
-    case 'active':   Stride.pause();        break;
+    case 'active':   Stride.end();          break;   // was Stride.pause()
   }
 });
 tap($('btnStop'), () => {
@@ -960,7 +960,7 @@ window.render = function(raw){
   $('climb').textContent   = Math.round(s.session.climb);
 
   $('fanLab').textContent  = STRIDE.fanLabel(s.fan);
-  $('leadLab').textContent = timed ? 'SKIP' : s.phase === 'paused' ? 'RESUME' : 'PAUSE';
+  $('leadLab').textContent = timed ? 'SKIP' : s.phase === 'paused' ? 'RESUME' : 'COOLDOWN';
   const moving = s.phase === 'active' || timed;
   $('btnSpeedUp').classList.toggle('mute', !moving);
   $('btnSpeedDown').classList.toggle('mute', !moving);
