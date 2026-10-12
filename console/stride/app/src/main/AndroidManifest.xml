@@ -24,17 +24,32 @@
          miserable thing to debug. This app targets SDK 28, so that is the rule
          that applies here and the permission has to be granted at runtime.
 
-         BLUETOOTH_SCAN / BLUETOOTH_CONNECT replaced it in API 31 and are
-         declared for the day targetSdk moves. `neverForLocation` states what is
-         already true — the scan filters on the heart rate service UUID and the
-         results are used for nothing but pairing a strap. -->
+         BLUETOOTH_SCAN / BLUETOOTH_CONNECT / BLUETOOTH_ADVERTISE replaced them
+         in API 31 and are declared for the day targetSdk moves. `neverForLocation`
+         states what is already true — the scan filters on the heart rate service
+         UUID and the results are used for nothing but pairing a strap.
+
+         No maxSdkVersion on the legacy three. While targetSdk is 28, an API 31+
+         console grants the new Bluetooth permissions *by way of* the legacy
+         ones — capping those at 30 meant a Gen 7 console on Android 13 granted
+         nothing, and FTMS advertising threw a SecurityException that took the
+         whole app down with it. Cap them when targetSdk reaches 31, not before. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" tools:targetApi="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="31" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" tools:targetApi="31" />
+    <!-- Display over other apps. Not used to draw over anything: on Android 10+
+         it is what lets BootReceiver open the console at power-on, which is
+         otherwise blocked as a background activity start (seen on a Gen 7,
+         Android 13). Granted by tools/unchain.sh with appops, revocable in
+         Settings → Apps → Special app access. The Android launcher stays the
+         home app, so the rest of the console — streaming apps included —
+         stays reachable. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- targetSdk 28 blocks cleartext by default, which would stop MediaPlayer
          fetching the coach's synthesised audio from Home Assistant. It has to be
          plain HTTP: the console's clock reads 2022, so TLS validation fails on
@@ -85,6 +100,18 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity-alias>
+
+        <!-- Android 13 will not let adb enable the alias above, so the app does
+             it on adb's behalf. DUMP: held by the shell, unobtainable by any
+             installed app. See KioskReceiver. -->
+        <receiver
+            android:name=".KioskReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="dev.stride.hud.KIOSK" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".BootReceiver"

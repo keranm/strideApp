@@ -9,14 +9,22 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # script asks adb what is attached — which is right far more often than a
 # hardcoded IP, and is the difference between this working on one bench and
 # working on anyone's.
-DEV="${STRIDE_DEVICE:-$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')}"
+# adb on Windows ends its lines in \r, which would hide every device.
+DEV="${STRIDE_DEVICE:-$(adb devices | tr -d '\r' | awk 'NR>1 && $2=="device" {print $1; exit}')}"
 if [ -z "$DEV" ]; then
-  echo "No device. Plug in over USB, or: export STRIDE_DEVICE=<ip>:5555" >&2
+  echo "No device. Plug in over USB, or: export STRIDE_DEVICE=<ip>:<port>" >&2
   exit 1
 fi
 PKG="dev.stride.usbprobe"
 
+# Android Studio's default SDK location on macOS, Windows, then Linux.
+if [ -z "${ANDROID_HOME:-}" ]; then
+  for d in "$HOME/Library/Android/sdk" "${LOCALAPPDATA:-}/Android/Sdk" "$HOME/Android/Sdk"; do
+    [ -d "$d" ] && { ANDROID_HOME="$d"; break; }
+  done
+fi
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+# java_home is macOS only. On Windows or Linux, set JAVA_HOME to a JDK 17.
 export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || echo /opt/homebrew/opt/openjdk@17)}"
 export PATH="$JAVA_HOME/bin:$PATH"
 

@@ -27,12 +27,17 @@ import kotlin.concurrent.thread
 /**
  * STRIDE USB probe — READ ONLY.
  *
- * Answers three questions about the treadmill control board:
+ * Answers four questions about the treadmill control board:
  *   1. Can a normal app claim it via UsbManager?
- *   2. Does it stream input reports unprompted?
- *   3. What do those reports look like, and which bytes move?
+ *   2. Which protocol does it speak, and does it answer?
+ *   3. Does it stream input reports unprompted?
+ *   4. What do those reports look like, and which bytes move?
  *
- * This deliberately never writes to the device. Nothing here can move the belt.
+ * Gen 6 boards (PID 2, FitPro 1) get the four identity queries in [IDENTITY],
+ * the same ones STRIDE sends before it does anything else. Gen 7 boards
+ * (PID 3, FitPro 2) get product info, the feature list and a subscription —
+ * see [askFitPro2]. Neither path writes a field. Nothing here can move the
+ * belt or the deck.
  */
 class MainActivity : Activity() {
 
@@ -40,12 +45,61 @@ class MainActivity : Activity() {
         const val TAG = "StrideProbe"
         const val ACTION_USB_PERMISSION = "dev.stride.usbprobe.USB_PERMISSION"
 
-        // ICON Fitness "ICON Generic HID"
+        // ICON Fitness. 0x0002 is the Gen 6 "ICON Generic HID" board STRIDE
+        // was built on; 0x0003 is the Gen 7 "iFIT-LargeX", vendor class 255.
         const val VID = 0x213c
-        const val PID = 0x0002
+        val PIDS = listOf(0x0002, 0x0003)
+
+        const val DEV_MAIN = 2
+
+        /**
+         * Identity queries, as (name, command, payload). Read-only by
+         * construction: SupportedDevices, DeviceInfo, SystemInfo, VersionInfo.
+         * Update (9) and EnterBootloader (56) are firmware operations and must
+         * never appear here — `02 04 09 0F` resets the board.
+         */
+        val IDENTITY = listOf(
+            Triple("SupportedDevices", 128, byteArrayOf()),
+            Triple("DeviceInfo", 129, byteArrayOf()),
+            Triple("SystemInfo", 130, byteArrayOf(0, 0)),
+            Triple("VersionInfo", 132, byteArrayOf(0, 0)),
+        )
+
+        // FitPro 2 (PID 3). Only these request types may leave this app:
+        // SUBSCRIBE 0x1, SUPPORTED_FEATURES 0x6, EXTENDED 0xE (product info
+        // only). No WRITE (0x2), no BOOTLOADER (0x9), no other channel.
+        const val PID_FITPRO2 = 0x0003
+        const val FP2_SUBSCRIBE = 0x1
+        const val FP2_SUPPORTED_FEATURES = 0x6
+        const val FP2_EXTENDED = 0xE
+        const val FP2_INFO_PRODUCT: Byte = 2
+        val FP2_ALLOWED = setOf(FP2_SUBSCRIBE, FP2_SUPPORTED_FEATURES, FP2_EXTENDED)
+
+        /** Features to subscribe to, if the board advertises them. Eight is iFit's batch size. */
+        val WATCH = linkedMapOf(
+            102 to "SYSTEM_MODE",
+            602 to "WORKOUT_STATE",
+            302 to "CURRENT_KPH",
+            402 to "CURRENT_GRADE_%",
+            303 to "MIN_KPH",
+            304 to "MAX_KPH",
+            403 to "MIN_GRADE_%",
+            404 to "MAX_GRADE_%",
+        )
+        val SYSTEM_MODES = listOf("BOOT_UP", "IDLE", "DMK (safety key out)", "WORKOUT", "MAINTENANCE", "ERROR")
+        val WORKOUT_STATES = listOf("NONE", "READY_TO_START", "WARM_UP", "RUNNING", "COOL_DOWN",
+            "PAUSED", "RESULTS", "OFF_MACHINE")
+        val PRODUCT_ITEMS = mapOf(
+            1 to "software version", 2 to "software part", 3 to "hardware part",
+            4 to "model", 5 to "serial", 6 to "display type", 9 to "motor controller version",
+            13 to "product serial", 20 to "motor controller type",
+        )
 
         const val MAX_LINES = 14
     }
+
+    @Volatile private var fitPro2 = false
+    private val live = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
     private lateinit var headerView: TextView
     private lateinit var maskView: TextView
@@ -65,8 +119,13 @@ class MainActivity : Activity() {
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
-            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            // Ask the manager rather than trust the extras alone, so a reply
+            // that arrives without them still gets the right answer.
+            val manager = getSystemService(Context.USB_SERVICE) as UsbManager
             val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                ?: manager.deviceList.values.firstOrNull { it.vendorId == VID && it.productId in PIDS }
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) ||
+                (device != null && manager.hasPermission(device))
             if (granted && device != null) {
                 append("permission GRANTED")
                 openAndRead(device)
@@ -144,11 +203,11 @@ class MainActivity : Activity() {
                     "pid=0x${it.productId.toString(16)} ${it.manufacturerName} / ${it.productName}")
         }
 
-        val device = all.firstOrNull { it.vendorId == VID && it.productId == PID }
+        val device = all.firstOrNull { it.vendorId == VID && it.productId in PIDS }
         if (device == null) {
             setHeader(
                 "STRIDE USB probe — read only\n" +
-                "TARGET NOT FOUND (looking for ${hex4(VID)}:${hex4(PID)})\n" +
+                "TARGET NOT FOUND (looking for ${hex4(VID)}:${PIDS.joinToString("/") { hex4(it) }})\n" +
                 "saw ${all.size} device(s): " +
                 all.joinToString { "${hex4(it.vendorId)}:${hex4(it.productId)}" }
             )
@@ -163,7 +222,10 @@ class MainActivity : Activity() {
             openAndRead(device)
         } else {
             append("requesting permission…")
-            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_IMMUTABLE else 0
+            // Must be MUTABLE: UsbManager answers by filling in EXTRA_DEVICE and
+            // EXTRA_PERMISSION_GRANTED, and an immutable intent arrives with
+            // neither, which reads as "denied". Found on a Gen 7, Android 13.
+            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
             val pi = PendingIntent.getBroadcast(
                 this, 0, Intent(ACTION_USB_PERMISSION).setPackage(packageName), flags
             )
@@ -240,9 +302,30 @@ class MainActivity : Activity() {
         dumpRawDescriptors(conn)
         fetchHidReportDescriptor(conn, chosen.id)
 
+        // The OUT endpoint on the same interface, for the identity queries.
+        // Gen 6 has it at 0x02, Gen 7 at 0x01, so find it rather than assume.
+        var outEp: UsbEndpoint? = null
+        for (e in 0 until chosen.endpointCount) {
+            val ep = chosen.getEndpoint(e)
+            if (ep.direction == UsbConstants.USB_DIR_OUT &&
+                (ep.type == UsbConstants.USB_ENDPOINT_XFER_INT ||
+                 ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK)
+            ) { outEp = ep; break }
+        }
+
         running = true
+        fitPro2 = device.productId == PID_FITPRO2
         val ep = inEp
         thread(name = "usb-read") {
+            // The two protocols must never be crossed. A FitPro 1 frame's length
+            // byte lands in FitPro 2's type slot, and a 9-byte one would read as
+            // BOOTLOADER. So the product id alone decides which one gets spoken.
+            when {
+                outEp == null -> append("no OUT endpoint — listening only")
+                fitPro2 -> askFitPro2(conn, outEp, ep)
+                else -> askIdentity(conn, outEp, ep)
+            }
+
             val buf = ByteArray(ep.maxPacketSize.coerceAtLeast(8))
             var consecutiveTimeouts = 0
             while (running) {
@@ -263,6 +346,187 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    /**
+     * Send each [IDENTITY] query to device MAIN and report what comes back.
+     * A reply that echoes the device and command and passes the FitPro
+     * checksum means the board speaks FitPro. Anything else means it doesn't,
+     * or not in this framing.
+     */
+    private fun askIdentity(conn: UsbDeviceConnection, out: UsbEndpoint, inn: UsbEndpoint) {
+        var understood = 0
+        for ((name, cmd, payload) in IDENTITY) {
+            require(cmd != 9 && cmd != 56) { "firmware command in the identity list" }
+            val frame = frame(DEV_MAIN, cmd, payload)
+            val sent = conn.bulkTransfer(out, frame, frame.size, 200)
+            if (sent < 0) {
+                append("$name: write failed (rc=$sent)")
+                continue
+            }
+            val buf = ByteArray(inn.maxPacketSize.coerceAtLeast(64))
+            val n = conn.bulkTransfer(inn, buf, buf.size, 1000)
+            if (n <= 0) {
+                append("$name → ${hex(frame)} : no reply")
+                continue
+            }
+            val reply = buf.copyOf(n)
+            val ok = isFitPro(reply, cmd)
+            if (ok) understood++
+            val status = if (n > 3) " status=${reply[3].toInt() and 0xFF}" else ""
+            append("$name → ${if (ok) "FITPRO OK" else "NOT FITPRO"}$status")
+            Log.i(TAG, "$name sent ${hex(frame)} got ${hex(reply)}")
+            Thread.sleep(100)
+        }
+        val verdict = when (understood) {
+            IDENTITY.size -> "VERDICT: speaks FitPro (${understood}/${IDENTITY.size})"
+            0 -> "VERDICT: does NOT answer FitPro framing (0/${IDENTITY.size})"
+            else -> "VERDICT: partly FitPro (${understood}/${IDENTITY.size})"
+        }
+        append(verdict)
+    }
+
+    /**
+     * FitPro 2 (Gen 7, PID 3), read only. See protocol/FITPRO2_PROTOCOL.md.
+     *
+     * Product info, then the supported-feature list, then a subscription to
+     * the handful of features worth watching. Every frame goes through
+     * [fp2Frame], which refuses anything that is not one of those three
+     * requests, so there is no WRITE here to send by mistake.
+     */
+    private fun askFitPro2(conn: UsbDeviceConnection, out: UsbEndpoint, inn: UsbEndpoint) {
+        append("FitPro 2 board — asking product info")
+        send2(conn, out, fp2Frame(FP2_EXTENDED, byteArrayOf(FP2_INFO_PRODUCT)))
+        val info = LinkedHashMap<Int, String>()
+        collect(conn, inn, 3000) { r ->
+            if (r.type() != 0x1E || r.len() < 2 || r[3] != FP2_INFO_PRODUCT) return@collect false
+            val item = r[4].toInt() and 0xFF
+            if (item == 0) return@collect true
+            info[item] = String(r, 5, r.len() - 2, Charsets.US_ASCII).trim()
+            false
+        }
+        // Serial numbers (items 5 and 13) stay in logcat, off the screen,
+        // so a photo of the probe is safe to post in an issue.
+        info.forEach { (k, v) ->
+            val name = PRODUCT_ITEMS[k] ?: "item $k"
+            Log.i(TAG, "product $name = $v")
+            if (k != 5 && k != 13) append("  $name: $v")
+        }
+        if (info.isEmpty()) append("  no product info reply")
+
+        append("asking supported features")
+        send2(conn, out, fp2Frame(FP2_SUPPORTED_FEATURES, byteArrayOf()))
+        val features = sortedSetOf<Int>()
+        var chunks = 0
+        collect(conn, inn, 5000) { r ->
+            if (r.type() != 0x11) return@collect false
+            if (r.len() == 0) return@collect chunks > 0
+            chunks++
+            for (i in 0 until r.len() / 2) features.add(u16(r, 3 + 2 * i))
+            false
+        }
+        Log.i(TAG, "features (${features.size}): ${features.joinToString(" ")}")
+        append("  ${features.size} features advertised → logcat")
+
+        val watch = WATCH.keys.filter { it in features }
+        if (watch.isEmpty()) {
+            append("none of the watched features advertised — not subscribing")
+            return
+        }
+        val ids = ByteArray(watch.size * 2)
+        watch.forEachIndexed { i, id -> ids[2 * i] = id.toByte(); ids[2 * i + 1] = (id shr 8).toByte() }
+        append("subscribing to ${watch.size}: ${watch.joinToString { WATCH[it]!! }}")
+        send2(conn, out, fp2Frame(FP2_SUBSCRIBE, ids))
+        append("VERDICT: FitPro 2. Live values below — pull the safety key to see SYSTEM_MODE change")
+    }
+
+    private fun send2(conn: UsbDeviceConnection, out: UsbEndpoint, frame: ByteArray) {
+        val rc = conn.bulkTransfer(out, frame, frame.size, 200)
+        Log.i(TAG, "fp2 sent ${hex(frame)} rc=$rc")
+        if (rc < 0) append("write failed (rc=$rc)")
+    }
+
+    /** Read until [done] says so or [ms] runs out, decoding events as they pass. */
+    private fun collect(conn: UsbDeviceConnection, inn: UsbEndpoint, ms: Long, done: (ByteArray) -> Boolean) {
+        val until = System.currentTimeMillis() + ms
+        val buf = ByteArray(inn.maxPacketSize.coerceAtLeast(64))
+        while (System.currentTimeMillis() < until) {
+            val n = conn.bulkTransfer(inn, buf, buf.size, 500)
+            if (n < 3 || buf[0].toInt() != 0x02) continue
+            val r = buf.copyOf(n)
+            Log.i(TAG, "fp2 got ${hex(r)}")
+            if (r.type() == 0x14) append("  board ERROR: ${hex(r.copyOf(r.len() + 3))}")
+            if (done(r)) return
+        }
+    }
+
+    /**
+     * `[0x02][APP | type][payload length][payload…][0x00]`. No checksum. The
+     * trailing 0x00 is iFit's own padding; SUPPORTED_FEATURES goes without it,
+     * as iFit sends it.
+     */
+    private fun fp2Frame(type: Int, payload: ByteArray): ByteArray {
+        require(type in FP2_ALLOWED) { "FitPro 2 request type $type is not read-only" }
+        if (type == FP2_EXTENDED) require(payload.size == 1 && payload[0] == FP2_INFO_PRODUCT) {
+            "only EXTENDED product info is allowed"
+        }
+        val pad = if (type == FP2_SUPPORTED_FEATURES) 0 else 1
+        val f = ByteArray(3 + payload.size + pad)
+        f[0] = 0x02
+        f[1] = type.toByte()
+        f[2] = payload.size.toByte()
+        payload.copyInto(f, 3)
+        return f
+    }
+
+    private fun ByteArray.type() = this[1].toInt() and 0xFF
+    private fun ByteArray.len() = (this[2].toInt() and 0xFF).coerceAtMost(size - 3)
+    private fun u16(b: ByteArray, off: Int) = (b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8)
+
+    /** EVENT frames — `02 15 06 <id LE> <float32 LE>` — as a live readout. */
+    private fun onFitPro2Event(r: ByteArray) {
+        if (r.size < 9 || r.type() != 0x15 || r.len() < 6) return
+        val id = u16(r, 3)
+        val bits = (r[5].toInt() and 0xFF) or ((r[6].toInt() and 0xFF) shl 8) or
+            ((r[7].toInt() and 0xFF) shl 16) or ((r[8].toInt() and 0xFF) shl 24)
+        live[id] = java.lang.Float.intBitsToFloat(bits)
+        runOnUiThread {
+            maskView.text = WATCH.entries.filter { live.containsKey(it.key) }.joinToString("\n") { (k, name) ->
+                val v = live[k]!!
+                when (k) {
+                    102 -> "$name = ${v.toInt()} ${SYSTEM_MODES.getOrElse(v.toInt()) { "?" }}"
+                    602 -> "$name = ${v.toInt()} ${WORKOUT_STATES.getOrElse(v.toInt()) { "?" }}"
+                    else -> "$name = ${"%.2f".format(v)}"
+                }
+            }
+        }
+    }
+
+    /** `[device][length][cmd][payload…][checksum]`, checksum a truncated sum. */
+    private fun frame(device: Int, cmd: Int, payload: ByteArray): ByteArray {
+        val length = payload.size + 4
+        val f = ByteArray(length)
+        f[0] = device.toByte()
+        f[1] = length.toByte()
+        f[2] = cmd.toByte()
+        payload.copyInto(f, 3)
+        f[length - 1] = checksum(f, length)
+        return f
+    }
+
+    private fun checksum(f: ByteArray, length: Int): Byte {
+        var sum = 0
+        for (i in 0 until length - 1) sum += f[i]
+        return sum.toByte()
+    }
+
+    private fun isFitPro(r: ByteArray, cmd: Int): Boolean {
+        if (r.size < 5) return false
+        val len = r[1].toInt() and 0xFF
+        if (len < 5 || len > r.size) return false
+        return (r[2].toInt() and 0xFF) == cmd && r[len - 1] == checksum(r, len)
+    }
+
+    private fun hex(b: ByteArray) = b.joinToString(" ") { "%02X".format(it) }
 
     /** Device + config descriptors, exactly as the device reported them. */
     private fun dumpRawDescriptors(conn: UsbDeviceConnection) {
@@ -350,6 +614,11 @@ class MainActivity : Activity() {
 
     private fun onReport(report: ByteArray) {
         reportCount++
+        if (fitPro2) {
+            if (report.size >= 3 && report[0].toInt() == 0x02) onFitPro2Event(report)
+            Log.i(TAG, "report#$reportCount ${report.joinToString(" ") { "%02X".format(it) }}")
+            return
+        }
 
         if (firstReport == null) firstReport = report.copyOf()
         report.forEachIndexed { i, b ->

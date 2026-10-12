@@ -207,7 +207,24 @@ class Ftms(private val context: Context) {
     /** How many clients are listening, for the settings screen to show. */
     val listeners: Int get() = synchronized(ftmsSubs) { ftmsSubs.size }
 
+    /**
+     * Never throws. This is called from the poll thread — the one driving the
+     * motor — and a Bluetooth permission the console has not granted must cost
+     * Zwift, not the treadmill. On a Gen 7 running Android 13 it threw, and the
+     * app died, the board dropped off USB, re-attached, relaunched the app, and
+     * round it went.
+     */
     fun start() {
+        try {
+            startAdvertisingService()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "ftms: not permitted on this console (${e.message}) — FTMS off")
+            try { server?.close() } catch (_: SecurityException) {}
+            server = null
+        }
+    }
+
+    private fun startAdvertisingService() {
         val a = adapter ?: run { Log.i(TAG, "ftms: no bluetooth adapter"); return }
         if (!a.isEnabled) { Log.i(TAG, "ftms: bluetooth is off"); return }
         if (!a.isMultipleAdvertisementSupported) {

@@ -149,6 +149,10 @@ class MainActivity : Activity() {
          * a new connection.
          */
         const val SILENCE_MS = 5_000L
+        /** How long a FitPro 2 belt gets to coast to a halt after a stop. */
+        const val FP2_STOP_SETTLE_MS = 6_000L
+        /** Poll loop silent this long mid-workout: release the board. See watchdog(). */
+        const val WATCHDOG_MS = 3_000L
 
         /** How long to leave between two attempts at rebuilding the transport.
          *  Nothing about a silent board is urgent enough to retry at poll rate. */
@@ -431,6 +435,10 @@ class MainActivity : Activity() {
 
     @Volatile private var running = false
     @Volatile private var deviceId: Byte = FitPro.Dev.TREADMILL
+    /** Set when the board is a Gen 7 (FitPro 2). Null means FitPro 1. */
+    @Volatile private var fp2: FitPro2Board? = null
+    /** When a stop was last queued for a FitPro 2 board. See enforceStopped. */
+    private var fp2StopAt = 0L
     @Volatile private var targetKph = 0.0
     @Volatile private var targetGrade = 0.0
     @Volatile private var fanState = 0
@@ -805,8 +813,12 @@ class MainActivity : Activity() {
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
-            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            // Ask the manager rather than trust the extras alone, so a reply
+            // that arrives without them still gets the right answer.
             val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                ?: conn.findDevice()
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) ||
+                (device != null && conn.hasPermission(device))
             if (granted && device != null) start(device) else Log.w(TAG, "usb permission denied")
         }
     }
@@ -1107,6 +1119,9 @@ class MainActivity : Activity() {
          * this is the cheap second attempt at the moment the screen changes.
          */
         @JavascriptInterface fun home() {
+            // Taken before anything is reset: is there a belt that may still be
+            // turning? Mid-walk, in the cool-down, or still winding down.
+            val wasMoving = Session.isMoving(session) || stopping || beltStillKph() >= STOPPED_KPH
             session = Session.WELCOME
             workout = "none"
             summaryLine = ""
@@ -1127,14 +1142,26 @@ class MainActivity : Activity() {
                 parkDeckAndFan()
             }
             targetKph = 0.0
+            /* IDLE is not a way out of running: the board ignores it (FitPro 1)
+             * or its effect on a moving belt is unproven (FitPro 2), and PAUSE
+             * is the legal exit — see pause(). HOME pressed during a cool-down
+             * used to send IDLE, leave the belt turning behind the welcome
+             * screen, and let enforceStopped catch it as a runaway: stopped,
+             * but logged as an incident with an MQTT alert every time. Found
+             * with the simulated treadmill, 12/10/2026.
+             *
+             * So a belt that may be moving gets PAUSE, and IDLE follows once
+             * it has stopped — see idleStep. */
             pendingWrite = buildMap {
                 put(FitPro.Field.KPH, 0.0)
-                put(FitPro.Field.WORKOUT_MODE, FitPro.Mode.IDLE.toDouble())
+                put(FitPro.Field.WORKOUT_MODE,
+                    (if (wasMoving) FitPro.Mode.PAUSE else FitPro.Mode.IDLE).toDouble())
                 // Only when we are the ones levelling the deck. An incline set
                 // by hand on the summary screen is a choice about the next
                 // walk, and DONE is not the moment to throw it away.
                 if (parked) put(FitPro.Field.GRADE, 0.0)
             }
+            idleWhenStopped = wasMoving
             repaint()
         }
 
@@ -1397,7 +1424,8 @@ class MainActivity : Activity() {
         @JavascriptInterface fun about(): String = JSONObject()
             .put("version", BuildConfig.VERSION_NAME)
             .put("build", BuildConfig.VERSION_CODE)
-            .put("board", "FitPro · device 0x%02x".format(deviceId))
+            .put("board", fp2?.let { "FitPro 2 · ${it.model.ifEmpty { "Gen 7" }}" }
+                ?: "FitPro · device 0x%02x".format(deviceId))
             .put("android", android.os.Build.VERSION.RELEASE)
             .toString()
 
@@ -1796,6 +1824,12 @@ class MainActivity : Activity() {
     private fun enforceStopped(actualKph: Double): Map<FitPro.Field, Double>? {
         if (Session.isMoving(session)) return null
         if (actualKph < STOPPED_KPH) return null
+        // FitPro 2 only. Its belt reading is real — FitPro 1's ActualKph reads
+        // 0 at every speed, which is why this never came up there — so a STOP
+        // is seen while the belt is still coasting to a halt, and every press
+        // recorded a runaway and sent the alert. A stop that has just been
+        // commanded gets time to land; one that does not land is caught after.
+        if (fp2 != null && SystemClock.elapsedRealtime() - fp2StopAt < FP2_STOP_SETTLE_MS) return null
         // A wind-down *is* the stop being carried out, deliberately gradually —
         // slamming zero over it would undo the one thing it exists for. Bounded,
         // because this is the net and the net cannot be held off for ever: a
@@ -2293,7 +2327,11 @@ class MainActivity : Activity() {
                     runOnUiThread { start(device) }
                     return@thread
                 }
-                val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_IMMUTABLE else 0
+                // Must be MUTABLE: UsbManager answers by filling in EXTRA_DEVICE
+                // and EXTRA_PERMISSION_GRANTED, and an immutable intent arrives
+                // with neither, which reads as "denied". Invisible on the
+                // Android 9 console; found on a Gen 7 running Android 13.
+                val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
                 val pi = PendingIntent.getBroadcast(
                     this, 0, Intent(ACTION_USB_PERMISSION).setPackage(packageName), flags
                 )
@@ -2311,6 +2349,91 @@ class MainActivity : Activity() {
         if (err != null) { Log.e(TAG, "open failed: $err"); return }
         running = true
         thread(name = "fitpro-poll") { pollLoop() }
+        thread(name = "fitpro-watchdog") { watchdog() }
+        registerDebugHooks()
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Watchdog — FitPro 2
+     * ---------------------------------------------------------------- *
+     *
+     * Found on a Gen 7 with the belt empty, 11/10/2026: with the app frozen
+     * but still holding the USB interface, the belt ran on at 2 km/h and STOP
+     * on the screen did nothing — only the safety key stopped it. The same
+     * board stops its belt at once when the app lets go of the interface
+     * (force-closed: the belt stopped immediately).
+     *
+     * So this thread, which is not the poll thread, watches the poll loop's
+     * heartbeat. If a workout is under way and the loop has not come round for
+     * [WATCHDOG_MS] — stuck in a network call, a deadlock, anything — it lets
+     * go of the board, which stops the belt, and marks the workout paused so
+     * that nothing restarts the belt until somebody presses RESUME. A whole
+     * frozen process takes this thread with it; that case is the board's own
+     * heartbeat to solve, and the safety key in the meantime.
+     *
+     * FitPro 2 only: what a FitPro 1 board does on release is unknown.
+     */
+    @Volatile private var pollBeat = 0L
+    @Volatile private var debugStallMs = 0L
+
+    /**
+     * `adb shell am broadcast -a dev.stride.hud.DEBUG_STALL_POLL -p dev.stride.hud --el ms 8000`
+     * stalls the poll loop once, for testing the watchdog. Registered in debug
+     * builds only; a release build has no way to do this.
+     */
+    private fun registerDebugHooks() {
+        if (!BuildConfig.DEBUG) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                debugStallMs = i.getLongExtra("ms", 8000L).coerceIn(0L, 30_000L)
+            }
+        }
+        val f = IntentFilter("dev.stride.hud.DEBUG_STALL_POLL")
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, Context.RECEIVER_EXPORTED)
+        else @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(r, f)
+    }
+    @Volatile private var watchdogTripped = false
+    /** Setup and reacquire legitimately take seconds; the watchdog stands down. */
+    @Volatile private var pollBusy = false
+
+    private fun watchdog() {
+        while (running) {
+            Thread.sleep(500)
+            if (fp2 == null || pollBusy || pollBeat == 0L || !conn.isOpen) continue
+            if (!Session.isMoving(session)) continue
+            val stalled = SystemClock.elapsedRealtime() - pollBeat
+            if (stalled < WATCHDOG_MS) continue
+            Log.e(TAG, "watchdog: poll loop silent for ${stalled} ms mid-workout — releasing the board to stop the belt")
+            recordIncident("WATCHDOG: poll loop silent ${stalled} ms in ${Session.name(session)} — board released, belt stopped")
+            watchdogTripped = true
+            conn.close()
+        }
+    }
+
+    /**
+     * What the poll loop does first when it comes back after the watchdog: the
+     * same as the safety key — paused, nothing remembered for the resume ramp,
+     * and the board told PAUSED once it is reachable again, since it will still
+     * say RUNNING.
+     */
+    private fun afterWatchdog() {
+        watchdogTripped = false
+        if (Session.isMoving(session)) {
+            accumulatedMs += SystemClock.elapsedRealtime() - activeSince
+            session = Session.PAUSED
+            phaseEndsAt = 0L
+        }
+        targetKph = 0.0
+        stopping = false
+        pausedKph = 0.0
+        rampTo = 0.0
+        rampReason = ""
+        pendingWrite = mapOf(
+            FitPro.Field.KPH to 0.0,
+            FitPro.Field.WORKOUT_MODE to FitPro.Mode.PAUSE.toDouble(),
+        )
+        lastReacquireMs = 0L   // reconnect now, not after the usual gap
+        repaint(boardOk = false)
     }
 
     /**
@@ -2440,12 +2563,19 @@ class MainActivity : Activity() {
     }
 
     private fun pollLoop() {
-        if (!resolveDeviceId()) { Log.e(TAG, "board did not answer on 4 or 2"); return }
-        // Before anything else. A locked board refuses reads too, so limits,
-        // telemetry and every workout command all depend on this.
-        unlockWithRetries()
-        readLimits()
-        readSleepConfig()
+        if (conn.isFitPro2) {
+            // Gen 7. Its own start-up, and nothing below that speaks FitPro 1
+            // may run against it: a FitPro 1 frame's length byte is a FitPro 2
+            // message type, and a 9-byte one means BOOTLOADER.
+            if (!startFitPro2()) { Log.e(TAG, "FitPro 2 board did not come up"); return }
+        } else {
+            if (!resolveDeviceId()) { Log.e(TAG, "board did not answer on 4 or 2"); return }
+            // Before anything else. A locked board refuses reads too, so limits,
+            // telemetry and every workout command all depend on this.
+            unlockWithRetries()
+            readLimits()
+            readSleepConfig()
+        }
         mqtt.onMessage(mqtt.coachTopic, ::onCoachLine)
         mqtt.onMessage(mqtt.uiTopic, ::onUiCommand)
         mqtt.onMessage(mqtt.personsTopic, ::onPersons)
@@ -2456,6 +2586,17 @@ class MainActivity : Activity() {
         var sinceMqtt = 0L
         var rejects = 0
         while (running) {
+            pollBeat = SystemClock.elapsedRealtime()
+            if (watchdogTripped) afterWatchdog()
+            // Debug builds only: stand in for a poll loop stuck in a network
+            // call, so the watchdog can be tested on a real belt. See
+            // registerDebugHooks.
+            if (BuildConfig.DEBUG && debugStallMs > 0) {
+                val ms = debugStallMs
+                debugStallMs = 0
+                Log.w(TAG, "debug: stalling the poll loop for $ms ms")
+                Thread.sleep(ms)
+            }
             // enforceStopped comes first and outranks everything, including a
             // queued write: nothing is more important than a belt that should
             // not be moving.
@@ -2475,6 +2616,10 @@ class MainActivity : Activity() {
              * then the speed it enables — and if the mode is refused, the
              * speed is still queued rather than lost with it. */
             var queued = pendingWrite
+            // A stop on its way to a FitPro 2 board — see enforceStopped.
+            if (fp2 != null && queued?.get(FitPro.Field.WORKOUT_MODE)?.toInt() == FitPro.Mode.PAUSE) {
+                fp2StopAt = SystemClock.elapsedRealtime()
+            }
             var rest: Map<FitPro.Field, Double>? = null
             if (queued != null && queued.size > 1 &&
                 queued.containsKey(FitPro.Field.WORKOUT_MODE)) {
@@ -2486,11 +2631,50 @@ class MainActivity : Activity() {
             val writes = enforceStopped(beltStillKph())
                 ?: enforceLevel(lastActualGrade)
                 ?: enforceFanOff()
-                ?: queued ?: decelStep() ?: rampStep()
+                ?: queued ?: decelStep() ?: rampStep() ?: idleStep()
 
             if (writes != null) lastWriteMs = SystemClock.elapsedRealtime()
-            val reply = conn.exchange(FitPro.readWrite(deviceId, READS, writes ?: emptyMap()))
-            if (reply == null) {
+
+            /* Both protocols come down to the same three outcomes — silence, a
+             * refusal, or a set of FitPro 1 field values — so everything after
+             * this point, all the safety logic included, is shared. FitPro 2
+             * translates inside FitPro2Board; FitPro 1 is the frame it always
+             * was, plus the security block that only it has. */
+            val board = fp2
+            var reply: ByteArray? = null
+            val outcome: FitPro2Board.Result = if (board != null) {
+                board.cycle(writes, minKph)
+            } else {
+                reply = conn.exchange(FitPro.readWrite(deviceId, READS, writes ?: emptyMap()))
+                when {
+                    reply == null -> FitPro2Board.Result.Silent
+                    // The board asking to be unlocked is not a dropped frame — it is a
+                    // request, and the only correct answer is to authenticate again.
+                    // Ignoring it costs everything: reads are refused too, so the HUD
+                    // goes quiet, every workout command is silently rejected, and the
+                    // console can still navigate while being unable to act.
+                    FitPro.isSecurityBlock(reply) -> {
+                        lastReplyMs = SystemClock.elapsedRealtime()
+                        boardLocked = true
+                        if (unlockAttempts == 0 || SystemClock.elapsedRealtime() - lastUnlockMs > UNLOCK_RETRY_MS) {
+                            unlockAttempts++
+                            lastUnlockMs = SystemClock.elapsedRealtime()
+                            Log.w(TAG, "board locked (attempt $unlockAttempts) — authenticating again")
+                            if (unlockWithRetries()) {
+                                rejects = 0
+                                unlockAttempts = 0
+                            }
+                        }
+                        Thread.sleep(POLL_MS)
+                        continue
+                    }
+                    else -> FitPro.rejectReason(reply, READS)
+                        ?.let { FitPro2Board.Result.Rejected(it) }
+                        ?: FitPro2Board.Result.Values(FitPro.parse(reply, READS))
+                }
+            }
+
+            if (outcome is FitPro2Board.Result.Silent) {
                 // Same rule as the reject path below: a board that has stopped
                 // answering is a reason to say so, not a reason to stop
                 // drawing. This one used to fall straight through to the sleep
@@ -2514,32 +2698,12 @@ class MainActivity : Activity() {
             }
             lastReplyMs = SystemClock.elapsedRealtime()
 
-            // The board asking to be unlocked is not a dropped frame — it is a
-            // request, and the only correct answer is to authenticate again.
-            // Ignoring it costs everything: reads are refused too, so the HUD
-            // goes quiet, every workout command is silently rejected, and the
-            // console can still navigate while being unable to act.
-            if (FitPro.isSecurityBlock(reply)) {
-                boardLocked = true
-                if (unlockAttempts == 0 || SystemClock.elapsedRealtime() - lastUnlockMs > UNLOCK_RETRY_MS) {
-                    unlockAttempts++
-                    lastUnlockMs = SystemClock.elapsedRealtime()
-                    Log.w(TAG, "board locked (attempt $unlockAttempts) — authenticating again")
-                    if (unlockWithRetries()) {
-                        rejects = 0
-                        unlockAttempts = 0
-                    }
-                }
-                Thread.sleep(POLL_MS)
-                continue
-            }
-
-            val why = FitPro.rejectReason(reply, READS)
-            if (why != null) {
+            if (outcome is FitPro2Board.Result.Rejected) {
+                val why = outcome.reason
                 // Log the first few and then every hundredth — a persistent
                 // reject reason is a real signal, a lone one is just noise.
                 if (rejects < 5 || rejects % 100 == 0) {
-                    Log.w(TAG, "dropped frame ($why): ${FitPro.hex(reply)}")
+                    Log.w(TAG, "dropped frame ($why)" + (reply?.let { ": ${FitPro.hex(it)}" } ?: ""))
                 }
                 rejects++
 
@@ -2589,7 +2753,7 @@ class MainActivity : Activity() {
             // poll, now that the board is in a state that will accept it.
             if (queued != null && writes === queued) pendingWrite = rest
 
-            val v = FitPro.parse(reply, READS).filter { (f, value) ->
+            val v = (outcome as FitPro2Board.Result.Values).v.filter { (f, value) ->
                 // Reject anything outside what the machine says it can do.
                 when (f) {
                     FitPro.Field.ACTUAL_KPH, FitPro.Field.KPH ->
@@ -2650,6 +2814,26 @@ class MainActivity : Activity() {
             }
             Thread.sleep(POLL_MS)
         }
+    }
+
+    /** HOME paused a moving belt; IDLE goes once it has stopped. See home(). */
+    @Volatile private var idleWhenStopped = false
+
+    /**
+     * The second half of HOME on a moving belt: IDLE, once the belt is still.
+     *
+     * Queued rather than returned, so that a refusal is retried and given up on
+     * by the same rules as any other write. A walk started in the meantime
+     * cancels it — that walk is in charge of the board now.
+     */
+    private fun idleStep(): Map<FitPro.Field, Double>? {
+        if (!idleWhenStopped) return null
+        if (Session.isMoving(session)) { idleWhenStopped = false; return null }
+        if (beltStillKph() >= STOPPED_KPH) return null
+        idleWhenStopped = false
+        pendingWrite = mapOf(FitPro.Field.WORKOUT_MODE to FitPro.Mode.IDLE.toDouble())
+        Log.i(TAG, "home: belt stopped — board back to idle")
+        return null
     }
 
     /**
@@ -3108,6 +3292,8 @@ class MainActivity : Activity() {
      * along because a motor tachometer would do just as well as a speedometer.
      */
     private fun probeSpeed() {
+        // A FitPro 1 hunt through FitPro 1 devices. Never against a Gen 7 board.
+        if (fp2 != null) { Log.i(TAG, "fp2: CURRENT_KPH reads 0 while the belt should move"); return }
         Log.i(TAG, "--- speed probe: ActualKph reads 0 while the belt is moving ---")
         for (dev in listOf(FitPro.Dev.TREADMILL, FitPro.Dev.MAIN, FitPro.Dev.SPEED)) {
             val reply = conn.exchange(FitPro.readWrite(dev, SPEED_PROBE))
@@ -3287,6 +3473,8 @@ class MainActivity : Activity() {
      * that does not track, which is exactly where we are now.
      */
     private fun readFan() {
+        // FitPro 2's fan encoding is not known yet; the tile stays local.
+        if (fp2 != null) fanReadable = false
         if (fanReadable == false) return
         val reply = conn.exchange(FitPro.readWrite(deviceId, FAN_READ)) ?: return
         val why = FitPro.rejectReason(reply, FAN_READ)
@@ -3392,6 +3580,11 @@ class MainActivity : Activity() {
      * handle to go looking for one would be the more expensive mistake.
      */
     private fun reacquire(): Boolean {
+        pollBusy = true
+        try { return reacquireBoard() } finally { pollBusy = false }
+    }
+
+    private fun reacquireBoard(): Boolean {
         lastReacquireMs = SystemClock.elapsedRealtime()
         val device = conn.findDevice()
         if (device == null) {
@@ -3405,6 +3598,16 @@ class MainActivity : Activity() {
         conn.close()
         val err = conn.open(device)
         if (err != null) { Log.w(TAG, "board silent — reopen failed: $err"); return false }
+        if (conn.isFitPro2) {
+            // A fresh subscription; there is no lock to undo on FitPro 2.
+            val board = FitPro2Board(conn)
+            if (!board.setup()) { Log.w(TAG, "board silent — reopened, but FitPro 2 setup failed"); return false }
+            fp2 = board
+            Log.i(TAG, "FitPro 2 board is answering again")
+            lastReplyMs = SystemClock.elapsedRealtime()
+            return true
+        }
+        fp2 = null
         if (!resolveDeviceId()) {
             Log.w(TAG, "board silent — reopened, but it answers on neither 4 nor 2")
             return false
@@ -3441,9 +3644,34 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Bring up a Gen 7 board: product info, feature list, subscribe, limits.
+     *
+     * No unlock — FitPro 2 has no VerifySecurity — and no sleep config, which
+     * is a FitPro 1 field set. The limits arrive with the subscription.
+     */
+    private fun startFitPro2(): Boolean {
+        val board = FitPro2Board(conn)
+        if (!board.setup()) return false
+        fp2 = board
+        when (val r = board.cycle(null, minKph)) {
+            is FitPro2Board.Result.Values -> applyLimits(r.v)
+            else -> {
+                Log.w(TAG, "fp2: no limits from the board — keeping defaults")
+                strap.logRadioCapabilities()
+                ftms.start()
+            }
+        }
+        lastReplyMs = SystemClock.elapsedRealtime()
+        return true
+    }
+
     private fun readLimits() {
         val reply = conn.exchange(FitPro.readWrite(deviceId, LIMITS)) ?: return
-        val v = FitPro.parse(reply, LIMITS)
+        applyLimits(FitPro.parse(reply, LIMITS))
+    }
+
+    private fun applyLimits(v: Map<FitPro.Field, Double>) {
         v[FitPro.Field.MAX_KPH]?.let { if (it > 0) maxKph = it }
         v[FitPro.Field.MIN_KPH]?.let { if (it > 0) minKph = it }
         v[FitPro.Field.MAX_GRADE]?.let { if (it != 0.0) maxGrade = it }

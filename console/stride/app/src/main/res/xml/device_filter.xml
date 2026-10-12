@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ICON Fitness control board: 0x213C / 0x0002 in decimal -->
+    <!-- ICON Fitness control boards, in decimal. 0x213C = 8508.
+         0x0002 = Gen 6, FitPro 1. 0x0003 = Gen 7 "iFIT-LargeX", FitPro 2. -->
     <usb-device vendor-id="8508" product-id="2" />
+    <usb-device vendor-id="8508" product-id="3" />
 </resources>

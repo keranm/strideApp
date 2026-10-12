@@ -32,6 +32,14 @@ notices and shows a screen, but it isn't what stopped the belt.
 moves the deck, because the deck can't run away underneath you. It will say
 "lift to 6.4 km/h" and leave the belt where it is.
 
+**On Gen 7, a stuck app stops the belt.** If the loop that drives the board
+stalls for three seconds mid-workout, a separate watchdog lets go of the board,
+which stops the belt, and the workout is left paused until somebody presses
+RESUME. If the app dies outright, the board stops the belt on its own. A
+console frozen solid, app and watchdog together, is not covered yet: that is
+the safety key's job. All of this was tested on one Gen 7 with the belt
+empty, before anyone walked on it.
+
 **Automatic stops ramp down** at 2 km/h per second. The first guided walk cut
 the belt from 4.2 km/h to zero the moment the plan ended, which was enough to
 catch someone off guard — at a run it would have put them on the floor. **The

@@ -9,10 +9,12 @@ wouldn't have.
 
 ## The most useful thing you can do
 
-**Tell me what board your treadmill has.** Working or not.
+**Tell me what board your treadmill has.** Working or not. The easiest way
+is a page in [`treadmills/`](treadmills/README.md), copied from its template.
 
-Right now the known-good list is one machine, a NordicTrack C 1750 with a
-FitPro board, and that's the single biggest thing standing between this working
+Right now the known-good list is two machines: a NordicTrack C 1750 (Gen 6,
+FitPro) in daily use, and a NordicTrack X22i (Gen 7, FitPro 2), newer but
+walked on. That's the single biggest thing standing between this working
 on my treadmill and working on yours. I'm not buying more treadmills to find
 out, so the list can only come from other people.
 
@@ -56,8 +58,8 @@ on a particular state, or press the number keys to jump between them.
 | | |
 |---|---|
 | `console/stride/` | The Android app. Kotlin drives the machine, HTML draws the screen. |
-| `console/usbprobe/` | Read-only board identifier. Writes nothing, moves nothing. |
-| `protocol/` | The [FitPro serial protocol](protocol/FITPRO_PROTOCOL.md), decoded. Start here for a different machine. |
+| `console/usbprobe/` | Read-only board identifier for Gen 6 (FitPro 1) and Gen 7 (FitPro 2) boards. Sends only identity and read requests, moves nothing. |
+| `protocol/` | The [FitPro serial protocol](protocol/FITPRO_PROTOCOL.md) (Gen 6) and [FitPro 2](protocol/FITPRO2_PROTOCOL.md) (Gen 7), decoded. Start here for a different machine. |
 | `homeassistant/` | Optional coach, reminders and dashboard scripts. |
 | `tools/unchain.sh` | Disables the iFit packages in the order that matters. |
 

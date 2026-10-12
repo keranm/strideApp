@@ -21,9 +21,11 @@
 > and it cuts the motor directly. STRIDE drives the incline, but speed is only
 > ever suggested. You decide when to go faster.
 
-> **Gen 7 / iFit 2.0.** Second-hand reports say this update closes the
-> privileged-mode route everything here depends on. If you know how to do this on Gen 7
-> let us know the steps and we can update this
+> **Gen 7.** The jailbreak works, and STRIDE drives the Gen 7's motor board,
+> which speaks a different protocol, [FitPro 2](protocol/FITPRO2_PROTOCOL.md).
+> It runs on a Gen 7 NordicTrack X22i with iFit builds from August 2026. It was
+> tested with the belt empty first, and has since been walked on. The steps are
+> in [INSTALL.md](docs/INSTALL.md), marked Gen 7. One machine so far.
 
 
 I got tired of iFit on my NordicTrack. Manual mode, a 400 m loop, and an
@@ -52,7 +54,7 @@ and it now pairs with Zwift over Bluetooth FTMS.
 |---|---|
 | **`console/`** | The Android app that replaces iFit on the treadmill's own screen. Talks to the motor board over USB, drives the incline, runs guided walks, and gives you five completely different interfaces to pick from. |
 | **`homeassistant/`** | Optional scripts for the coach, the reminders and a health dashboard. The treadmill shows up in Home Assistant without any of them. |
-| **`protocol/`** | The [FitPro serial protocol](protocol/FITPRO_PROTOCOL.md), decoded and written down. If you're working on a different machine, start here. |
+| **`protocol/`** | The [FitPro serial protocol](protocol/FITPRO_PROTOCOL.md), decoded and written down, and its Gen 7 successor [FitPro 2](protocol/FITPRO2_PROTOCOL.md). If you're working on a different machine, start here. |
 
 There used to be an `ios/` folder. That's now its own thing,
 **[AH for HA](https://github.com/keranm/ah-for-ha)**, which pushes Apple Health
@@ -95,7 +97,14 @@ Honestly, maybe. It's proven on one machine, mine:
 
 Other Gen 6 NordicTrack and ProForm consoles on the same board are probably
 fine, because the protocol looks like a family rather than a single model, but
-nobody has tried. You also need a console you can reach with `adb`, and that's
+nobody has tried.
+
+A second machine, a **Gen 7** NordicTrack X22i incline trainer (Android 13,
+FitPro 2 board, incline −6 to +40 %, speed 1.5 to 20 km/h), is walked on with
+STRIDE driving its belt and deck.
+
+**[treadmills/](treadmills/README.md)** has a page per generation and per
+machine: board, protocol, quirks, and exactly what was tested. Add yours. You also need a console you can reach with `adb`, and that's
 the part that varies most by model and year.
 
 [`console/usbprobe`](console/usbprobe) asks your board what it is and changes

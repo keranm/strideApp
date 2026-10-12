@@ -3,18 +3,41 @@
 # Order matters: eru dies first, everything else is cleanup.
 
 set -u
+say() { printf '\n>>> %s\n' "$*"; }
+
+if ! command -v adb >/dev/null 2>&1; then
+  echo "adb not found. Install Android platform-tools and put it on your PATH." >&2
+  exit 1
+fi
+
+# Gen 7 / newer consoles: Wireless debugging wants a one-off pairing first, on
+# a different port from the one you connect to, with a code that changes every
+# time the pairing dialog opens. Pairing needs platform-tools 30 or later, and
+# an older adb is half of why the original Unchained script stopped working.
+#   STRIDE_PAIR=<ip>:<pairing port>  STRIDE_PAIR_CODE=<six digits>
+if [ -n "${STRIDE_PAIR:-}" ]; then
+  TOOLS="$(adb version | tr -d '\r' | sed -n 's/^Version \([0-9]*\).*/\1/p')"
+  if [ -n "$TOOLS" ] && [ "$TOOLS" -lt 30 ]; then
+    echo "adb is platform-tools $TOOLS. Pairing needs 30 or later; update it." >&2
+    exit 1
+  fi
+  say "Pairing with $STRIDE_PAIR"
+  adb pair "$STRIDE_PAIR" "${STRIDE_PAIR_CODE:?set STRIDE_PAIR_CODE to the six-digit code on the console}" \
+    || { echo "FAILED: pairing. Reopen the pairing dialog; the port and code change each time." >&2; exit 1; }
+fi
+
 # The console's address. Override with STRIDE_DEVICE, or leave it and the
 # script asks adb what is attached — which is right far more often than a
 # hardcoded IP, and is the difference between this working on one bench and
-# working on anyone's.
-DEV="${STRIDE_DEVICE:-$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')}"
+# working on anyone's. adb on Windows ends its lines in \r, hence the tr.
+DEV="${STRIDE_DEVICE:-$(adb devices | tr -d '\r' | awk 'NR>1 && $2=="device" {print $1; exit}')}"
 if [ -z "$DEV" ]; then
-  echo "No device. Plug in over USB, or: export STRIDE_DEVICE=<ip>:5555" >&2
+  echo "No device. Plug in over USB, or: export STRIDE_DEVICE=<ip>:<port>" >&2
+  echo "On Gen 7 the port is the one under Wireless debugging, not 5555." >&2
   exit 1
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-say() { printf '\n>>> %s\n' "$*"; }
 sh_() { adb -s "$DEV" shell "$@"; }
 
 say "Connecting to $DEV"
@@ -79,6 +102,29 @@ else
 
 EOF
 fi
+case "$DEV" in
+  *:5555) ;;
+  *:*) cat <<EOF
+
+  NOTE: $DEV looks like Wireless debugging rather than classic ADB over Wi-Fi.
+  Its port changes when the console reboots or Wireless debugging is toggled.
+  This computer stays paired, so next time read the new port under Developer
+  options → Wireless debugging and run: adb connect <ip>:<new port>
+
+EOF
+  ;;
+esac
+
+# ---- 3b. Gen 7: free the motor board. ----
+# On Gen 7 the board (USB 0x213C/0x0003, FitPro 2) is held by iFit's motor
+# service, which restarts itself after a force-stop. Disabling it is the only
+# way STRIDE gets the board. Gen 6 never needed this, so it stays Gen 6-shaped
+# there: only when the Gen 7 board is actually on the bus.
+if sh_ dumpsys usb 2>/dev/null | tr -d '\r' | grep -A1 'vendor_id=8508' | grep -q 'product_id=3$'; then
+    say "Gen 7 board found — disabling com.ifit.glassos_service so STRIDE can claim it"
+    sh_ pm disable-user --user 0 com.ifit.glassos_service
+    echo "  to give the board back to iFit:  adb -s $DEV shell pm enable com.ifit.glassos_service"
+fi
 
 # ---- 4. Launcher replacement. ----
 say "Disabling com.ifit.launcher"
@@ -124,15 +170,35 @@ else
     say "No STRIDE APK yet — build it with console/stride/run.sh, then re-run this"
 fi
 
+# Android 10+ blocks an app opening itself from a boot receiver unless it may
+# display over other apps — so without this a Gen 7 (Android 13) powers on to
+# the Android launcher and STRIDE waits to be found. Same permission iFit's
+# eru held. The launcher stays the home app, and everything else on the
+# console stays reachable.
+if [ "$(sh_ getprop ro.build.version.sdk | tr -d '\r')" -ge 29 ] 2>/dev/null &&
+   sh_ pm list packages | grep -q dev.stride.hud; then
+    say "Letting STRIDE open itself at power-on (display over other apps)"
+    sh_ appops set dev.stride.hud SYSTEM_ALERT_WINDOW allow
+fi
+
 if [ "${STRIDE_KIOSK:-1}" = "1" ] && sh_ pm list packages | grep -q dev.stride.hud; then
     say "Making STRIDE the home app"
     # The alias ships disabled: two home apps and no preference between them
     # means Android asks "which one?" at every boot. Enabling it and setting
     # the preference has to happen together, in that order.
-    sh_ pm enable dev.stride.hud/.HomeAlias
+    #
+    # Android 13 (Gen 7) refuses `pm enable` on another app's component, so
+    # there the app enables its own alias at our request — see KioskReceiver.
+    if sh_ pm enable dev.stride.hud/.HomeAlias 2>&1 | grep -q "Exception"; then
+        echo "  pm enable refused (Android 12+) — asking STRIDE to enable it itself"
+        sh_ am broadcast -a dev.stride.hud.KIOSK --ez on true -n dev.stride.hud/.KioskReceiver >/dev/null
+        OFF="adb -s $DEV shell am broadcast -a dev.stride.hud.KIOSK --ez on false -n dev.stride.hud/.KioskReceiver"
+    else
+        OFF="adb -s $DEV shell pm disable-user --user 0 dev.stride.hud/.HomeAlias"
+    fi
     sh_ cmd package set-home-activity dev.stride.hud/.HomeAlias
     echo "  to hand the console back to its launcher:"
-    echo "      adb -s $DEV shell pm disable-user --user 0 dev.stride.hud/.HomeAlias"
+    echo "      $OFF"
 fi
 
 say "Current launchers"
@@ -140,4 +206,12 @@ sh_ cmd package query-activities \
     -a android.intent.action.MAIN -c android.intent.category.HOME \
     2>/dev/null | grep -i packageName | sort -u
 
-say "DONE — eru disabled, STRIDE installed and set as home. Reboot to verify it sticks."
+if sh_ pm list packages | grep -q dev.stride.hud; then
+    if [ "${STRIDE_KIOSK:-1}" = "1" ]; then
+        say "DONE — eru disabled, STRIDE installed and set as home. Reboot to verify it sticks."
+    else
+        say "DONE — eru disabled, STRIDE installed (home app left alone). Reboot to verify it sticks."
+    fi
+else
+    say "DONE — eru disabled. STRIDE is not installed yet. Reboot to verify eru stays off."
+fi
