@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1280,height=800,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>/* Fit the fixed 1280x800 canvas to smaller panels, e.g. a 1024x600 console. Never scales up. */
+(function(){function fit(){var w=innerWidth,h=innerHeight;if(!w||!h)return;var z=Math.min(w/1280,h/800,1),r=document.documentElement;r.style.zoom=z;r.style.transform="translateX("+Math.max(0,(w/z-1280)/2)+"px)";}fit();addEventListener("resize",fit);})();</script>
 <title>STRIDE · Ember</title>
 <style>
 /* ---------------------------------------------------------------------------
