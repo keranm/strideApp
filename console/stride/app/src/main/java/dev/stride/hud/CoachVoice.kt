@@ -61,7 +61,11 @@ class CoachVoice(private val context: Context) {
             player = mp
             mp.setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    // USAGE_ASSISTANT is API 26; older AudioAttributes.Builder rejects it
+                    .setUsage(
+                        if (android.os.Build.VERSION.SDK_INT >= 26) AudioAttributes.USAGE_ASSISTANT
+                        else AudioAttributes.USAGE_MEDIA
+                    )
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
