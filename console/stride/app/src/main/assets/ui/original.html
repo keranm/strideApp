@@ -498,7 +498,7 @@ button.pulse{animation:pulse .9s ease-out 2}
   <div class="side right">
     <div class="label">Speed</div>
     <div class="value" id="speed">0.0</div>
-    <div class="unit">km/h</div>
+    <div class="unit spdU">km/h</div>
     <div class="target">target <b id="speedTarget">0.0</b></div>
     <div class="ticks" id="speedTicks"></div>
   </div>
@@ -563,7 +563,7 @@ button.pulse{animation:pulse .9s ease-out 2}
 
   <div class="strip">
     <div class="metric"><div class="k">Elapsed</div><div class="v" id="elapsed">0:00</div></div>
-    <div class="metric"><div class="k">Distance</div><div class="v"><span id="distance">0</span><small>m</small></div></div>
+    <div class="metric"><div class="k">Distance</div><div class="v"><span id="distance">0</span><small class="distU">m</small></div></div>
     <div class="metric"><div class="k">Calories</div><div class="v"><span id="calories">0</span><small>kcal</small></div></div>
     <div class="metric"><div class="k">Heart rate</div><div class="v"><span id="pulse">—</span><small>bpm</small></div></div>
   </div>
@@ -598,10 +598,10 @@ button.pulse{animation:pulse .9s ease-out 2}
     <div class="sumcoach" id="sumCoach"></div>
     <div class="cards">
       <div class="card"><div class="k">Time</div><div class="v" id="sumTime">0:00</div></div>
-      <div class="card"><div class="k">Distance</div><div class="v"><span id="sumDist">0</span><small>m</small></div></div>
+      <div class="card"><div class="k">Distance</div><div class="v"><span id="sumDist">0</span><small class="distU">m</small></div></div>
       <div class="card"><div class="k">Calories</div><div class="v"><span id="sumCal">0</span><small>kcal</small></div></div>
-      <div class="card"><div class="k">Avg speed</div><div class="v"><span id="sumAvg">0.0</span><small>km/h</small></div></div>
-      <div class="card"><div class="k">Max speed</div><div class="v"><span id="sumMax">0.0</span><small>km/h</small></div></div>
+      <div class="card"><div class="k">Avg speed</div><div class="v"><span id="sumAvg">0.0</span><small class="spdU">km/h</small></div></div>
+      <div class="card"><div class="k">Max speed</div><div class="v"><span id="sumMax">0.0</span><small class="spdU">km/h</small></div></div>
       <div class="card"><div class="k">Avg incline</div><div class="v"><span id="sumInc">0.0</span><small>%</small></div></div>
     </div>
     <div class="done"><button class="primary" id="btnDone">DONE</button></div>
@@ -667,6 +667,27 @@ let suggestKph = 0;
 const LAP_M = 400;
 const $ = STRIDE.$;
 const nf = STRIDE.nf;
+
+/* Units, from Settings → Display. Display only: every value still reaches
+   Kotlin in km/h. */
+const KPH_PER_MPH = 1.609344;
+let MI = false;
+function readUnits(){
+  try { MI = (JSON.parse(Stride.settingsJson() || '{}').units || 'km') === 'mi'; }
+  catch (e) { MI = false; }
+  document.querySelectorAll('.spdU').forEach(e => e.textContent = MI ? 'mph' : 'km/h');
+  document.querySelectorAll('.distU').forEach(e => e.textContent = MI ? 'mi' : 'm');
+}
+/** km/h → the display unit. */
+const spd = kph => MI ? kph / KPH_PER_MPH : kph;
+const spdUnit = () => MI ? 'mph' : 'km/h';
+/** metres → "1.23" (miles) or "1,234" (metres) for the odometer readouts. */
+const dist = m => MI ? (m / 1609.344).toFixed(2) : nf(m);
+/** metres → "0.40 mi" / "1.20 km" / "350 m" for a distance left. */
+const distLeft = m => MI ? (m / 1609.344).toFixed(2) + ' mi'
+                         : (m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m');
+readUnits();
+document.addEventListener('stride-settings-closed', readUnits);
 const mmss = STRIDE.mmss;
 const tap = STRIDE.tap;
 const stepper = STRIDE.stepper;
@@ -967,8 +988,8 @@ tap($('btnDone'),   () => Stride.home());
 // back — you tell us. If it is still out, the next poll raises this again.
 tap($('btnDmkOk'),  () => Stride.ackDmk());
 
-stepper($('btnSpeedUp'),    d => Stride.speed(d),   0.1, 0.5);
-stepper($('btnSpeedDown'),  d => Stride.speed(-d),  0.1, 0.5);
+stepper($('btnSpeedUp'),    d => Stride.speed(d * (MI ? KPH_PER_MPH : 1)),   0.1, 0.5);
+stepper($('btnSpeedDown'),  d => Stride.speed(-d * (MI ? KPH_PER_MPH : 1)),  0.1, 0.5);
 stepper($('btnInclineUp'),  d => Stride.incline(d), 0.5, 0.5);
 stepper($('btnInclineDown'),d => Stride.incline(-d),0.5, 0.5);
 
@@ -1522,13 +1543,13 @@ window.render = function(s){
   if (mode === 'summary'){ renderSummary(s); return; }
   if (mode === 'welcome') return;
 
-  $('speed').textContent   = (s.speed ?? 0).toFixed(1);
+  $('speed').textContent   = spd(s.speed ?? 0).toFixed(1);
   $('incline').textContent = (s.incline ?? 0).toFixed(1);
-  $('speedTarget').textContent   = (s.targetSpeed ?? 0).toFixed(1);
+  $('speedTarget').textContent   = spd(s.targetSpeed ?? 0).toFixed(1);
   $('inclineTarget').textContent = (s.targetIncline ?? 0).toFixed(1);
 
   $('elapsed').textContent  = mmss(s.elapsed ?? 0);
-  $('distance').textContent = nf(s.distance ?? 0);
+  $('distance').textContent = dist(s.distance ?? 0);
   $('calories').textContent = nf(s.calories ?? 0);
   $('pulse').textContent    = s.pulse ? s.pulse : '—';
 
@@ -1555,7 +1576,7 @@ window.render = function(s){
   if (mode === 'paused'){
     const where = [mmss(s.elapsed ?? 0) + ' in'];
     if (s.segments) where.push(`${s.segmentLabel || 'segment ' + s.segment} · ${s.segment} of ${s.segments}`);
-    else where.push(nf(s.distance ?? 0) + ' m');
+    else where.push(distLeft(s.distance ?? 0));
     where.push('the belt has stopped');
     $('pausedWhere').textContent = where.join(' · ');
   }
@@ -1629,8 +1650,7 @@ window.render = function(s){
     $('segName').textContent = s.segmentLabel || '';
     $('segSub').textContent =
       `${s.plan} · ${s.segment} of ${s.segments} · ${s.segmentLeftIsDistance
-        ? (s.segmentLeft >= 1000 ? (s.segmentLeft/1000).toFixed(2) + ' km'
-                                 : Math.round(s.segmentLeft || 0) + ' m')
+        ? distLeft(s.segmentLeft || 0)
         : mmss(s.segmentLeft || 0)} left`;
 
     // Suggested pace, and whether the hill is still the plan's to move.
@@ -1640,8 +1660,8 @@ window.render = function(s){
       const delta = (s.suggestPace - (s.targetSpeed || 0));
       const verb = delta > 0.15 ? 'lift to' : delta < -0.15 ? 'ease to' : 'hold';
       el.innerHTML = verb === 'hold'
-        ? `hold <b>${s.suggestPace.toFixed(1)}</b> km/h`
-        : `${verb} <b>${s.suggestPace.toFixed(1)}</b> km/h`;
+        ? `hold <b>${spd(s.suggestPace).toFixed(1)}</b> ${spdUnit()}`
+        : `${verb} <b>${spd(s.suggestPace).toFixed(1)}</b> ${spdUnit()}`;
       el.classList.toggle('hand', !s.inclineAuto);
       if (!s.inclineAuto) el.innerHTML += ' · incline yours until the next stretch';
     } else {
@@ -1679,10 +1699,10 @@ function renderSummary(s){
   $('sumCoach').textContent = s.summaryLine || '';
   $('sumSub').textContent  = kind + ' complete';
   $('sumTime').textContent = mmss(s.elapsed ?? 0);
-  $('sumDist').textContent = nf(s.distance ?? 0);
+  $('sumDist').textContent = dist(s.distance ?? 0);
   $('sumCal').textContent  = nf(s.calories ?? 0);
-  $('sumAvg').textContent  = (s.avgSpeed ?? 0).toFixed(1);
-  $('sumMax').textContent  = (s.maxSpeed ?? 0).toFixed(1);
+  $('sumAvg').textContent  = spd(s.avgSpeed ?? 0).toFixed(1);
+  $('sumMax').textContent  = spd(s.maxSpeed ?? 0).toFixed(1);
   $('sumInc').textContent  = (s.avgIncline ?? 0).toFixed(1);
 }
 
