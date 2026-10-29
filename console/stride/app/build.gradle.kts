@@ -26,7 +26,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.stride.hud"
-        minSdk = 28
+        minSdk = 24
         targetSdk = 28
         // Bumped per release, because the About screen is the only place
         // anyone can see which build is on a console, and "0.1-spike · build 1"
@@ -99,6 +99,11 @@ android {
          * which is the point of leaving the rest on.
          */
         disable += "ExpiredTargetSdkVersion"
+        // minSdk 24 (Android 7 consoles). Lint then flags the
+        // API 31 BLUETOOTH_ADVERTISE/CONNECT runtime checks in Ftms.kt, but with
+        // targetSdk 28 those permissions do not exist and the manifest's pre-31
+        // BLUETOOTH/BLUETOOTH_ADMIN set is what applies.
+        disable += "MissingPermission"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

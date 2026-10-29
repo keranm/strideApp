@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.stride.usbprobe"
-        minSdk = 28
+        minSdk = 24
         // Console is Android 9. Targeting 28 avoids newer background/permission
         // restrictions we have no use for on a single-purpose kiosk device.
         targetSdk = 28
