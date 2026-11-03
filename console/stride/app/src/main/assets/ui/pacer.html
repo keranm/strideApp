@@ -432,7 +432,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;text-align:
   <div class="fig l">
     <div class="k">SPEED</div>
     <div class="v" id="speed">0.0</div>
-    <div class="u">km/h</div>
+    <div class="u" data-u="speed">km/h</div>
   </div>
   <div class="fig r">
     <div class="k">INCLINE</div>
@@ -505,7 +505,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;text-align:
 
   <div class="tele">
     <div class="cell"><div class="k">TIME</div><div class="v" id="elapsed">0:00</div></div>
-    <div class="cell"><div class="k">DISTANCE</div><div class="v"><span id="dist">0.00</span><span class="u"> km</span></div></div>
+    <div class="cell"><div class="k">DISTANCE</div><div class="v"><span id="dist">0.00</span><span class="u" data-u="dist"> km</span></div></div>
     <div class="cell"><div class="k">BURNED</div><div class="v"><span id="cals">0</span><span class="u"> kcal</span></div></div>
     <div class="cell"><div class="k">CLIMBED</div><div class="v"><span id="climb">0</span><span class="u"> m</span></div></div>
   </div>
@@ -755,7 +755,7 @@ function renderPlan() {
       const km = (r.distance_m || 0) / 1000 * (on ? 2 : 1);
       const up = on ? STRIDE.loopedClimb(r) : (r.climb_m || 0);
       lane(r.name || 'Route',
-           km.toFixed(2) + ' km · ' + Math.round(up) + ' m of climb' +
+           STRIDE.kmText(km) + ' · ' + Math.round(up) + ' m of climb' +
              (on ? ' · there and back' : ''),
            STRIDE.routePoints(r), r.id === flow.route,
            () => flow.setRoute(r.id), r.id);
@@ -949,7 +949,7 @@ window.render = function(raw){
     : s.ramping === 'resuming' ? 'RESUMING'
     : 'WORKING OUT';
 
-  $('speed').textContent   = s.belt.speed.toFixed(1);
+  $('speed').textContent   = STRIDE.spd(s.belt.speed);
   $('incline').textContent = s.belt.incline.toFixed(1);
   $('inclineNote').textContent = !guided ? 'yours'
                                : s.targets.inclineAuto ? 'auto' : 'yours for now';
@@ -978,7 +978,7 @@ window.render = function(raw){
     $('suggest').classList.toggle('off', !suggesting);
     suggestKph = suggesting ? s.targets.suggest : 0;
     if (suggesting) $('suggest').textContent =
-      'try ' + s.targets.suggest.toFixed(1) + ' km/h';
+      'try ' + STRIDE.spd(s.targets.suggest) + ' ' + STRIDE.spdUnit();
   }
   if (guided && timed){
     /* A preview. Not "2 of 9, 1:36 left" — the plan has not started, so it has
@@ -1002,7 +1002,7 @@ window.render = function(raw){
     const left = guided ? s.segment.count - s.segment.index : 0;
     $('pausedWhere').textContent = guided && s.segment.count
       ? (s.segment.index - 1) + ' down, ' + (left + 1) + ' waiting. No rush.'
-      : STRIDE.km(s.session.distance) + ' km banked. No rush.';
+      : STRIDE.km(s.session.distance) + ' ' + STRIDE.distUnit() + ' banked. No rush.';
   }
 };
 

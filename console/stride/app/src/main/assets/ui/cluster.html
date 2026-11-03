@@ -489,7 +489,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;text-align:
       <circle id="spdTick" cx="150" cy="150" r="120" fill="none" stroke="#e5b567" stroke-width="12"
               pathLength="1000" stroke-dasharray="0 1000" transform="rotate(-90 150 150)"/>
     </svg>
-    <div class="k">SPEED KM/H</div>
+    <div class="k">SPEED <span data-u="speedU">KM/H</span></div>
     <div class="v mono" id="speed">0.0</div>
     <div class="n mono" id="suggest"></div>
   </div>
@@ -533,7 +533,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;text-align:
 
   <div class="tele">
     <div class="cell"><div class="k">ELAPSED</div><div class="v mono" id="elapsed">0:00</div></div>
-    <div class="cell"><div class="k">DISTANCE</div><div class="v mono"><span id="dist">0.00</span><span class="u"> KM</span></div></div>
+    <div class="cell"><div class="k">DISTANCE</div><div class="v mono"><span id="dist">0.00</span><span class="u" data-u="distU"> KM</span></div></div>
     <div class="cell"><div class="k">CALORIES</div><div class="v mono" id="cals">0</div></div>
     <div class="cell"><div class="k">CLIMBED</div><div class="v mono"><span id="climb">0</span><span class="u"> M</span></div></div>
     <div class="cell hr"><div class="k">HEART RATE</div><div class="v mono" id="pulse">&mdash;&mdash;</div></div>
@@ -574,11 +574,11 @@ button{font-family:inherit;color:inherit;background:none;border:none;text-align:
   <div class="sumcoach" id="sumCoach"></div>
   <div class="grid">
     <div class="cell"><div class="kk">TIME</div><div class="vv mono" id="sumTime">0:00</div></div>
-    <div class="cell last"><div class="kk">DISTANCE</div><div class="vv mono"><span id="sumDist">0.00</span><span class="u"> KM</span></div></div>
+    <div class="cell last"><div class="kk">DISTANCE</div><div class="vv mono"><span id="sumDist">0.00</span><span class="u" data-u="distU"> KM</span></div></div>
     <div class="cell"><div class="kk">CALORIES</div><div class="vv mono" id="sumCals">0</div></div>
     <div class="cell last"><div class="kk">CLIMBED</div><div class="vv mono"><span id="sumClimb">0</span><span class="u"> M</span></div></div>
-    <div class="cell"><div class="kk">AVG SPEED</div><div class="vv mono"><span id="sumAvg">0.0</span><span class="u"> KM/H</span></div></div>
-    <div class="cell last"><div class="kk">MAX SPEED</div><div class="vv mono"><span id="sumMax">0.0</span><span class="u"> KM/H</span></div></div>
+    <div class="cell"><div class="kk">AVG SPEED</div><div class="vv mono"><span id="sumAvg">0.0</span><span class="u" data-u="speedU"> KM/H</span></div></div>
+    <div class="cell last"><div class="kk">MAX SPEED</div><div class="vv mono"><span id="sumMax">0.0</span><span class="u" data-u="speedU"> KM/H</span></div></div>
   </div>
 
   <div class="heart" id="sumHeart">
@@ -753,7 +753,7 @@ function renderPlan() {
       const km = (r.distance_m || 0) / 1000 * (on ? 2 : 1);
       const up = on ? STRIDE.loopedClimb(r) : (r.climb_m || 0);
       bay((r.name || 'Route').toUpperCase(),
-          km.toFixed(2) + ' KM · CLIMB ' + Math.round(up) + ' M' +
+          STRIDE.kmText(km).toUpperCase() + ' · CLIMB ' + Math.round(up) + ' M' +
             (on ? ' · BOTH WAYS' : ''),
           pts, r.id === flow.route, () => flow.setRoute(r.id), r.id);
     });
@@ -951,7 +951,7 @@ window.render = function(raw){
 
   /* Both needles come off the belt controller, never off the setpoint. */
   $('incline').textContent = s.belt.incline.toFixed(1);
-  $('speed').textContent   = s.belt.speed.toFixed(1);
+  $('speed').textContent   = STRIDE.spd(s.belt.speed);
   $('incArc').setAttribute('stroke-dasharray',
     dash(s.belt.incline / INCLINE_FULL));
   $('spdArc').setAttribute('stroke-dasharray',
@@ -964,7 +964,7 @@ window.render = function(raw){
      console may act on it — the pace belongs to whoever is on the belt. */
   const suggesting = guided && s.targets.suggest > 0 && !timed;
   suggestKph = suggesting ? s.targets.suggest : 0;
-  $('suggest').textContent = suggesting ? 'TGT ' + s.targets.suggest.toFixed(1) : '';
+  $('suggest').textContent = suggesting ? 'TGT ' + STRIDE.spd(s.targets.suggest) : '';
   $('spdTick').setAttribute('stroke-dasharray',
     suggesting ? tick(s.targets.suggest / SPEED_FULL) : '0 1000');
 
@@ -997,8 +997,8 @@ window.render = function(raw){
     $('pausedAt').textContent = mmss(s.session.elapsed);
     $('pausedWhere').textContent = guided && s.segment.count
       ? 'SEG ' + s.segment.index + '/' + s.segment.count + ' · ' +
-        STRIDE.km(s.session.distance) + ' KM'
-      : STRIDE.km(s.session.distance) + ' KM';
+        STRIDE.km(s.session.distance) + ' ' + STRIDE.distUnit().toUpperCase()
+      : STRIDE.km(s.session.distance) + ' ' + STRIDE.distUnit().toUpperCase();
   }
 };
 
@@ -1091,8 +1091,8 @@ function renderSummary(s){
   $('sumTime').textContent  = mmss(s.session.elapsed);
   $('sumDist').textContent  = STRIDE.km(s.session.distance);
   $('sumCals').textContent  = nf(s.session.calories);
-  $('sumAvg').textContent   = s.session.avgSpeed.toFixed(1);
-  $('sumMax').textContent   = s.session.maxSpeed.toFixed(1);
+  $('sumAvg').textContent   = STRIDE.spd(s.session.avgSpeed);
+  $('sumMax').textContent   = STRIDE.spd(s.session.maxSpeed);
   $('sumClimb').textContent = Math.round(s.session.climb);
   renderHeartPanel(s);
   renderBadges(s);
