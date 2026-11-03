@@ -1130,9 +1130,78 @@ function nf(n) {
   return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-/** Metres to km. Two decimals by default: at walking pace one decimal sits
- *  still for two minutes at a time, which reads as a frozen display. */
-function km(m, dp) { return ((m || 0) / 1000).toFixed(dp == null ? 2 : dp); }
+/* Units. Settings → Display stores "km" or "mi"; the board is metric either
+   way, so this only changes what is drawn. settingsJson() builds the whole
+   settings document, so it is read through the bridge at most once a second
+   rather than on every repaint. */
+var MI_PER_KM = 0.621371;
+var M_PER_MI = 1609.344;
+var unitsAt = 0, unitsMi = false, warmKph = 2;
+function mi() {
+  var now = Date.now();
+  if (now - unitsAt > 1000) {
+    unitsAt = now;
+    try {
+      var cfg = JSON.parse(global.Stride.settingsJson());
+      unitsMi = cfg.units === 'mi';
+      warmKph = cfg.warmup_kph > 0 ? cfg.warmup_kph : 2;
+    }
+    catch (e) { /* no bridge (a browser): stay metric, 2 km/h */ }
+  }
+  return unitsMi;
+}
+
+/** Belt speed from km/h to whatever the screen is set to. */
+function spd(kph, dp) {
+  return ((kph || 0) * (mi() ? MI_PER_KM : 1)).toFixed(dp == null ? 1 : dp);
+}
+function spdUnit() { return mi() ? 'mph' : 'km/h'; }
+
+/** The warm-up speed from Settings → Treadmill, as a phrase: "2 km/h",
+ *  "1.5 mph". The trailing ".0" is dropped so a round number reads round. */
+function warmupText() {
+  var v = spd(warmKph);
+  return String(+v) + ' ' + spdUnit();
+}
+function distUnit() { return mi() ? 'mi' : 'km'; }
+
+/** Metres to miles, two decimals for the same reason as [km]. */
+function miles(m, dp) { return ((m || 0) / M_PER_MI).toFixed(dp == null ? 2 : dp); }
+
+/** A distance already in km, with its unit, for the route cards. */
+function kmText(k) {
+  return mi() ? (k * MI_PER_KM).toFixed(2) + ' mi' : k.toFixed(2) + ' km';
+}
+
+/** Metres to km, or to miles when the screen is set to them. Two decimals by
+ *  default: at walking pace one decimal sits still for two minutes at a
+ *  time, which reads as a frozen display. */
+function km(m, dp) {
+  return mi() ? miles(m, dp) : ((m || 0) / 1000).toFixed(dp == null ? 2 : dp);
+}
+
+/* Static unit labels in the markup carry data-u="speed" | "dist" | "distm"
+   ("distm" is metres, or miles), or "speedU" / "distU" for the upper-case
+   labels some screens use. Re-applied every second so a change made on
+   the settings screen shows without a reload. */
+function applyUnits() {
+  var els = document.querySelectorAll('[data-u]');
+  for (var i = 0; i < els.length; i++) {
+    var k = els[i].getAttribute('data-u');
+    var t = k === 'speed'  ? spdUnit()
+          : k === 'speedU' ? spdUnit().toUpperCase()
+          : k === 'dist'   ? distUnit()
+          : k === 'distU'  ? distUnit().toUpperCase()
+          : k === 'distm'  ? (mi() ? 'mi' : 'm')
+          : k === 'warmup' ? warmupText() : null;
+    if (t === null || els[i].textContent.trim() === t) continue;
+    els[i].textContent = (/^\s/.test(els[i].textContent) ? ' ' : '') + t;
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', applyUnits);
+  setInterval(applyUnits, 1000);
+}
 
 var FAN_NAMES = ['OFF', 'LOW', 'MEDIUM', 'HIGH', 'AUTO'];
 function fanName(n) { return FAN_NAMES[n] || 'OFF'; }
@@ -1570,6 +1639,14 @@ global.STRIDE = {
   mmss: mmss,
   nf: nf,
   km: km,
+  mi: mi,
+  spd: spd,
+  spdUnit: spdUnit,
+  warmupText: warmupText,
+  distUnit: distUnit,
+  miles: miles,
+  kmText: kmText,
+  applyUnits: applyUnits,
   durationLabel: durationLabel,
   fanName: fanName,
   fanLabel: fanLabel,

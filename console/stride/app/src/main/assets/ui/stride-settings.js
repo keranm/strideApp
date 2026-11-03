@@ -283,6 +283,35 @@
     return s;
   }
 
+  /* A speed that is stored in km/h whatever the screen says. In miles the
+     stepper counts in whole half-mph (1.0, 1.5, 2.0 ...) and converts on the
+     way out. The range is the km/h one, narrowed to the half-mph values inside
+     it, so a 1–6 km/h range is 1.0–3.5 mph. A value stored off that grid shows
+     as it is until the first tap, which lands on the next step in that
+     direction. */
+  function speedStepper(key, kph, minKph, maxKph) {
+    if (!STRIDE.mi()) return stepper(key, kph, minKph, maxKph, 0.5, 'km/h', 1);
+    var K = 1.609344, STEP = 0.5, EPS = 1e-9;
+    var lo = Math.ceil(minKph / K / STEP - EPS) * STEP;
+    var hi = Math.floor(maxKph / K / STEP + EPS) * STEP;
+    var mph = kph / K;
+    var s = el('div', 'sx-step');
+    var v = el('div', 'sx-v');
+    var draw = function () { v.innerHTML = mph.toFixed(1) + '<small>mph</small>'; };
+    var bump = function (d) {
+      var next = d > 0 ? (Math.floor(mph / STEP + EPS) + 1) * STEP
+                       : (Math.ceil(mph / STEP - EPS) - 1) * STEP;
+      mph = Math.min(hi, Math.max(lo, next));
+      draw();
+      save(key, Math.round(mph * K * 100) / 100);
+    };
+    s.appendChild(press(el('button', '', '&minus;'), function () { bump(-1); }));
+    s.appendChild(v);
+    s.appendChild(press(el('button', '', '+'), function () { bump(1); }));
+    draw();
+    return s;
+  }
+
   /* Somebody's age, which saves through setPersonAge rather than the global
      store the ordinary stepper writes to — it belongs to a person, not to the
      console.
@@ -848,7 +877,7 @@
     g2.appendChild(row('Cool-down', '',
       stepper('cooldown_min', S.cooldown_min || 0, 0, 10, 1, 'min')));
     g2.appendChild(row('Warm-up speed', 'Also the speed a cool-down eases back to.',
-      stepper('warmup_kph', S.warmup_kph || 2, 1, 6, 0.5, 'km/h', 1)));
+      speedStepper('warmup_kph', S.warmup_kph || 2, 1, 6)));
     sc.appendChild(g2);
 
     var g3 = group('Guided walks');
@@ -869,8 +898,8 @@
       el('div', 'sx-ro', '<b>' + lim.minGrade.toFixed(1) + '</b> to <b>+' +
         lim.maxGrade.toFixed(1) + '</b> %')));
     g4.appendChild(row('Speed range', '',
-      el('div', 'sx-ro', '<b>' + lim.minKph.toFixed(1) + '</b> to <b>' +
-        lim.maxKph.toFixed(1) + '</b> km/h')));
+      el('div', 'sx-ro', '<b>' + STRIDE.spd(lim.minKph) + '</b> to <b>' +
+        STRIDE.spd(lim.maxKph) + '</b> ' + STRIDE.spdUnit())));
     sc.appendChild(g4);
   }
 
@@ -1014,10 +1043,10 @@
 
     var g = group(routes.length + (routes.length === 1 ? ' route' : ' routes'));
     routes.forEach(function (r) {
-      var km = ((r.distance_m || 0) / 1000).toFixed(2);
+      var km = STRIDE.kmText((r.distance_m || 0) / 1000);
       var climb = Math.round(r.climb_m || 0);
       var changes = (r.segments || []).length;
-      var desc = km + ' km · ' + climb + ' m of climb · ' + changes +
+      var desc = km + ' · ' + climb + ' m of climb · ' + changes +
                  ' incline changes';
       if (r.difficulty && r.difficulty !== 1) {
         desc += ' · at ' + Math.round(r.difficulty * 100) + '%';

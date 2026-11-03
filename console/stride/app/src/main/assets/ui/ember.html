@@ -447,7 +447,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;
   <div class="gauge r">
     <div class="cap">SPEED</div>
     <div class="v" id="speed">0.0</div>
-    <div class="u">km/h</div>
+    <div class="u" data-u="speed">km/h</div>
     <div class="sug" id="suggest"></div>
   </div>
 
@@ -510,7 +510,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;
   <div class="rule"></div>
   <div class="tele">
     <div class="cell"><div class="k">Elapsed</div><div class="v" id="elapsed">0:00</div></div>
-    <div class="cell"><div class="k">Distance</div><div class="v"><span id="dist">0.00</span><span class="u"> km</span></div></div>
+    <div class="cell"><div class="k">Distance</div><div class="v"><span id="dist">0.00</span><span class="u" data-u="dist"> km</span></div></div>
     <div class="cell"><div class="k">Climbed</div><div class="v"><span id="climb">0</span><span class="u"> m</span></div></div>
     <div class="cell"><div class="k">Calories</div><div class="v" id="cals">0</div></div>
     <div class="cell hr" id="hrCell"><div class="k">Heart rate</div><div class="none" id="pulse">no reading</div></div>
@@ -545,7 +545,7 @@ button{font-family:inherit;color:inherit;background:none;border:none;
   <div class="k" id="sumKind">&mdash;</div>
   <div class="grid">
     <div class="cell"><div class="kk">TIME</div><div class="vv" id="sumTime">0:00</div></div>
-    <div class="cell"><div class="kk">DISTANCE</div><div class="vv"><span id="sumDist">0.00</span><span class="u">km</span></div></div>
+    <div class="cell"><div class="kk">DISTANCE</div><div class="vv"><span id="sumDist">0.00</span><span class="u" data-u="dist">km</span></div></div>
     <div class="cell"><div class="kk">CALORIES</div><div class="vv" id="sumCals">0</div></div>
     <div class="cell"><div class="kk">AVG SPEED</div><div class="vv" id="sumAvg">0.0</div></div>
     <div class="cell"><div class="kk">CLIMBED</div><div class="vv"><span id="sumClimb">0</span><span class="u">m</span></div></div>
@@ -760,7 +760,7 @@ function renderPlan() {
       const km = (r.distance_m || 0) / 1000 * (on ? 2 : 1);
       const up = on ? STRIDE.loopedClimb(r) : (r.climb_m || 0);
       shapeCard(r.name || 'Route',
-                km.toFixed(2) + ' km · ' + Math.round(up) + ' m of climb' +
+                STRIDE.kmText(km) + ' · ' + Math.round(up) + ' m of climb' +
                   (on ? ' · there and back' : ''),
                 STRIDE.routePoints(r), r.id === flow.route,
                 () => flow.setRoute(r.id), r.id);
@@ -963,7 +963,7 @@ window.render = function(raw){
 
   /* Belt figures, always from the hardware. */
   $('incline').textContent = s.belt.incline.toFixed(1);
-  $('speed').textContent   = s.belt.speed.toFixed(1);
+  $('speed').textContent   = STRIDE.spd(s.belt.speed);
   $('inclineNote').textContent = !guided ? 'yours'
                                : s.targets.inclineAuto ? 'set for you'
                                : 'yours until the next stretch';
@@ -984,7 +984,7 @@ window.render = function(raw){
                      && Math.abs(suggestDelta) > 0.15;
   suggestKph = suggesting ? s.targets.suggest : 0;
   $('suggest').textContent = suggesting
-    ? (suggestDelta > 0 ? 'lift to ' : 'ease to ') + s.targets.suggest.toFixed(1) + ' km/h'
+    ? (suggestDelta > 0 ? 'lift to ' : 'ease to ') + STRIDE.spd(s.targets.suggest) + ' ' + STRIDE.spdUnit()
     : '';
 
   $('elapsed').textContent = mmss(s.session.elapsed);
@@ -1080,7 +1080,7 @@ function renderPath(s){
   for (let i = 0; i < pins.length; i++){
     pins[i].setAttribute('fill', prof.pins[i].x <= p.x ? '#e0a458' : '#4a423a');
   }
-  $('ftMid').textContent = STRIDE.km(s.session.distance) + ' KM IN';
+  $('ftMid').textContent = STRIDE.km(s.session.distance) + ' ' + STRIDE.distUnit().toUpperCase() + ' IN';
 }
 
 function renderWarm(s){
@@ -1104,7 +1104,7 @@ function renderSummary(s){
   $('sumTime').textContent  = mmss(s.session.elapsed);
   $('sumDist').textContent  = STRIDE.km(s.session.distance);
   $('sumCals').textContent  = nf(s.session.calories);
-  $('sumAvg').textContent   = s.session.avgSpeed.toFixed(1);
+  $('sumAvg').textContent   = STRIDE.spd(s.session.avgSpeed);
   $('sumClimb').textContent = Math.round(s.session.climb);
   $('sumNote').textContent  = s.session.climb > 60
     ? 'That is a real hill’s worth of climbing.' : '';

@@ -470,7 +470,7 @@ button.pulse{animation:pulse .9s ease-out 2}
       <div class="plans" id="plans"></div>
     </div>
 
-    <div class="foot" id="wFoot">Clip the safety key on first — the belt eases up to 2 km/h as soon as you choose.</div>
+    <div class="foot" id="wFoot">Clip the safety key on first — the belt eases up to <span data-u="warmup">2 km/h</span> as soon as you choose.</div>
     <button id="btnBack" class="back" style="display:none">← BACK</button>
     <button id="btnBegin" class="back begin" style="display:none">BEGIN →</button>
     <button id="btnSettings" class="gear">SETTINGS</button>
@@ -498,7 +498,7 @@ button.pulse{animation:pulse .9s ease-out 2}
   <div class="side right">
     <div class="label">Speed</div>
     <div class="value" id="speed">0.0</div>
-    <div class="unit">km/h</div>
+    <div class="unit" data-u="speed">km/h</div>
     <div class="target">target <b id="speedTarget">0.0</b></div>
     <div class="ticks" id="speedTicks"></div>
   </div>
@@ -509,7 +509,7 @@ button.pulse{animation:pulse .9s ease-out 2}
   <div class="phase" id="phase">
     <div class="pname" id="phaseName">Warm up</div>
     <div class="pclock" id="phaseClock">2:00</div>
-    <div class="pnote" id="phaseNote">easing in at 2 km/h</div>
+    <div class="pnote" id="phaseNote">easing in at <span data-u="warmup">2 km/h</span></div>
     <div class="pprev" id="phasePrev"></div>
     <div class="pbar"><i id="phaseBar"></i></div>
   </div>
@@ -563,7 +563,7 @@ button.pulse{animation:pulse .9s ease-out 2}
 
   <div class="strip">
     <div class="metric"><div class="k">Elapsed</div><div class="v" id="elapsed">0:00</div></div>
-    <div class="metric"><div class="k">Distance</div><div class="v"><span id="distance">0</span><small>m</small></div></div>
+    <div class="metric"><div class="k">Distance</div><div class="v"><span id="distance">0</span><small data-u="distm">m</small></div></div>
     <div class="metric"><div class="k">Calories</div><div class="v"><span id="calories">0</span><small>kcal</small></div></div>
     <div class="metric"><div class="k">Heart rate</div><div class="v"><span id="pulse">—</span><small>bpm</small></div></div>
   </div>
@@ -598,10 +598,10 @@ button.pulse{animation:pulse .9s ease-out 2}
     <div class="sumcoach" id="sumCoach"></div>
     <div class="cards">
       <div class="card"><div class="k">Time</div><div class="v" id="sumTime">0:00</div></div>
-      <div class="card"><div class="k">Distance</div><div class="v"><span id="sumDist">0</span><small>m</small></div></div>
+      <div class="card"><div class="k">Distance</div><div class="v"><span id="sumDist">0</span><small data-u="distm">m</small></div></div>
       <div class="card"><div class="k">Calories</div><div class="v"><span id="sumCal">0</span><small>kcal</small></div></div>
-      <div class="card"><div class="k">Avg speed</div><div class="v"><span id="sumAvg">0.0</span><small>km/h</small></div></div>
-      <div class="card"><div class="k">Max speed</div><div class="v"><span id="sumMax">0.0</span><small>km/h</small></div></div>
+      <div class="card"><div class="k">Avg speed</div><div class="v"><span id="sumAvg">0.0</span><small data-u="speed">km/h</small></div></div>
+      <div class="card"><div class="k">Max speed</div><div class="v"><span id="sumMax">0.0</span><small data-u="speed">km/h</small></div></div>
       <div class="card"><div class="k">Avg incline</div><div class="v"><span id="sumInc">0.0</span><small>%</small></div></div>
     </div>
     <div class="done"><button class="primary" id="btnDone">DONE</button></div>
@@ -860,7 +860,7 @@ function buildGuidedStep(){
       const km = (r.distance_m || 0) / 1000 * (on ? 2 : 1);
       const up = on ? STRIDE.loopedClimb(r) : (r.climb_m || 0);
       b.innerHTML = '<div class="pn">' + STRIDE.esc(r.name || 'Route') + '</div>' +
-                    '<div class="pb">' + km.toFixed(2) + ' km · ' +
+                    '<div class="pb">' + STRIDE.kmText(km) + ' · ' +
                     Math.round(up) + ' m up' +
                     (on ? '<br>there and back' : '') + '</div>' +
                     STRIDE.loopMark(on);
@@ -1522,13 +1522,13 @@ window.render = function(s){
   if (mode === 'summary'){ renderSummary(s); return; }
   if (mode === 'welcome') return;
 
-  $('speed').textContent   = (s.speed ?? 0).toFixed(1);
+  $('speed').textContent   = STRIDE.spd(s.speed ?? 0);
   $('incline').textContent = (s.incline ?? 0).toFixed(1);
-  $('speedTarget').textContent   = (s.targetSpeed ?? 0).toFixed(1);
+  $('speedTarget').textContent   = STRIDE.spd(s.targetSpeed ?? 0);
   $('inclineTarget').textContent = (s.targetIncline ?? 0).toFixed(1);
 
   $('elapsed').textContent  = mmss(s.elapsed ?? 0);
-  $('distance').textContent = nf(s.distance ?? 0);
+  $('distance').textContent = STRIDE.mi() ? STRIDE.miles(s.distance ?? 0) : nf(s.distance ?? 0);
   $('calories').textContent = nf(s.calories ?? 0);
   $('pulse').textContent    = s.pulse ? s.pulse : '—';
 
@@ -1555,7 +1555,7 @@ window.render = function(s){
   if (mode === 'paused'){
     const where = [mmss(s.elapsed ?? 0) + ' in'];
     if (s.segments) where.push(`${s.segmentLabel || 'segment ' + s.segment} · ${s.segment} of ${s.segments}`);
-    else where.push(nf(s.distance ?? 0) + ' m');
+    else where.push(STRIDE.mi() ? STRIDE.miles(s.distance ?? 0) + ' mi' : nf(s.distance ?? 0) + ' m');
     where.push('the belt has stopped');
     $('pausedWhere').textContent = where.join(' · ');
   }
@@ -1629,8 +1629,9 @@ window.render = function(s){
     $('segName').textContent = s.segmentLabel || '';
     $('segSub').textContent =
       `${s.plan} · ${s.segment} of ${s.segments} · ${s.segmentLeftIsDistance
-        ? (s.segmentLeft >= 1000 ? (s.segmentLeft/1000).toFixed(2) + ' km'
-                                 : Math.round(s.segmentLeft || 0) + ' m')
+        ? (STRIDE.mi() ? STRIDE.miles(s.segmentLeft || 0) + ' mi'
+                       : s.segmentLeft >= 1000 ? (s.segmentLeft/1000).toFixed(2) + ' km'
+                       : Math.round(s.segmentLeft || 0) + ' m')
         : mmss(s.segmentLeft || 0)} left`;
 
     // Suggested pace, and whether the hill is still the plan's to move.
@@ -1640,8 +1641,8 @@ window.render = function(s){
       const delta = (s.suggestPace - (s.targetSpeed || 0));
       const verb = delta > 0.15 ? 'lift to' : delta < -0.15 ? 'ease to' : 'hold';
       el.innerHTML = verb === 'hold'
-        ? `hold <b>${s.suggestPace.toFixed(1)}</b> km/h`
-        : `${verb} <b>${s.suggestPace.toFixed(1)}</b> km/h`;
+        ? `hold <b>${STRIDE.spd(s.suggestPace)}</b> ${STRIDE.spdUnit()}`
+        : `${verb} <b>${STRIDE.spd(s.suggestPace)}</b> ${STRIDE.spdUnit()}`;
       el.classList.toggle('hand', !s.inclineAuto);
       if (!s.inclineAuto) el.innerHTML += ' · incline yours until the next stretch';
     } else {
@@ -1679,10 +1680,10 @@ function renderSummary(s){
   $('sumCoach').textContent = s.summaryLine || '';
   $('sumSub').textContent  = kind + ' complete';
   $('sumTime').textContent = mmss(s.elapsed ?? 0);
-  $('sumDist').textContent = nf(s.distance ?? 0);
+  $('sumDist').textContent = STRIDE.mi() ? STRIDE.miles(s.distance ?? 0) : nf(s.distance ?? 0);
   $('sumCal').textContent  = nf(s.calories ?? 0);
-  $('sumAvg').textContent  = (s.avgSpeed ?? 0).toFixed(1);
-  $('sumMax').textContent  = (s.maxSpeed ?? 0).toFixed(1);
+  $('sumAvg').textContent  = STRIDE.spd(s.avgSpeed ?? 0);
+  $('sumMax').textContent  = STRIDE.spd(s.maxSpeed ?? 0);
   $('sumInc').textContent  = (s.avgIncline ?? 0).toFixed(1);
 }
 
