@@ -1,0 +1,19 @@
+{
+  "manifest_version": 2,
+  "name": "Stride bridge",
+  "version": "1.2",
+  "description": "Relays the Stride page<->Kotlin bridge over GeckoView native messaging.",
+  "browser_specific_settings": {
+    "gecko": { "id": "stride@stride.dev" }
+  },
+  "permissions": ["nativeMessaging", "geckoViewAddons"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

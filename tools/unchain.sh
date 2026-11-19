@@ -105,8 +105,14 @@ done
 # icon first" is one instruction too many.
 #
 # Set STRIDE_KIOSK=0 to install the app and leave the home app alone.
-APK="$HERE/../console/stride/app/build/outputs/apk/release/app-release.apk"
-[ -f "$APK" ] || APK="$HERE/../console/stride/app/build/outputs/apk/debug/app-debug.apk"
+#
+# STRIDE_ENGINE picks the build flavor: `classic` (default, System WebView) or
+# `gecko` (bundled GeckoView, for old consoles like the Elite 900). Prefer a
+# release APK, fall back to debug.
+ENGINE="${STRIDE_ENGINE:-classic}"
+OUT="$HERE/../console/stride/app/build/outputs/apk/$ENGINE"
+APK="$OUT/release/app-$ENGINE-release.apk"
+[ -f "$APK" ] || APK="$OUT/debug/app-$ENGINE-debug.apk"
 if [ -f "$APK" ]; then
     say "Installing STRIDE"
     adb -s "$DEV" install -r "$APK"
