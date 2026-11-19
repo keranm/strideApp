@@ -144,4 +144,10 @@ dependencies {
     // gecko flavor only. 143 is the last line with minSdk 21 (Android 5);
     // 144 raised it to 26 (Android 8), which would drop the Elite 900.
     "geckoImplementation"("org.mozilla.geckoview:geckoview:143.0.20251003115653")
+
+    // Local JVM unit tests. FitPro is pure framing/encoding with no Android or
+    // I/O deps, so its whole contract is testable off-device with plain JUnit —
+    // no Robolectric, no instrumentation, no AndroidX (which this app avoids).
+    // Run: ./gradlew testClassicDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }
