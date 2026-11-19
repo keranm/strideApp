@@ -2447,6 +2447,24 @@ class MainActivity : Activity() {
              * not act on a speed write while the console is IDLE. Mode first,
              * then the speed it enables — and if the mode is refused, the
              * speed is still queued rather than lost with it. */
+            // Clear the belt's cold-start interlock before any write that puts
+            // the board into a running state. The board sets IDLE_MODE_LOCKOUT=1
+            // whenever it idles out (see FitPro.Field.IDLE_MODE_LOCKOUT), and
+            // while it is 1 every WorkoutMode=running write from IDLE is refused
+            // (status:failed) — which is what stopped the belt starting. iFit
+            // unlocks it the same way on its workout flow. We send it in its own
+            // frame first (the board accepts the config write while still idle),
+            // then the mode write below starts the belt. pendingWrite is
+            // one-shot, so this fires once per start, not every poll.
+            pendingWrite?.get(FitPro.Field.WORKOUT_MODE)?.toInt()?.let { m ->
+                if (m == FitPro.Mode.RUNNING || m == FitPro.Mode.WARM_UP || m == FitPro.Mode.RESUME) {
+                    val lr = conn.exchange(FitPro.readWrite(deviceId, emptyList(),
+                            mapOf(FitPro.Field.IDLE_MODE_LOCKOUT to 0.0)))
+                    Log.i(TAG, "belt start: cleared IDLE_MODE_LOCKOUT -> " +
+                            (lr?.let { FitPro.rejectReason(it, emptyList()) ?: "ok" } ?: "no reply"))
+                }
+            }
+
             var queued = pendingWrite
             var rest: Map<FitPro.Field, Double>? = null
             if (queued != null && queued.size > 1 &&

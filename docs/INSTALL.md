@@ -48,6 +48,11 @@ STRIDE is confirmed on two machines:
 - **Likely to work:** other Gen 6 NordicTrack and ProForm consoles on a FitPro board.
 - **Older consoles** (Android 7, like the Elite 900) work too, but only with the
   **gecko** build — see [Which engine](#which-engine).
+- **Cold-start interlock:** some boards (confirmed on the Elite 900) set an
+  "idle-mode lockout" that refuses every software start while the console has
+  idled out — the belt simply won't begin. STRIDE now clears that lockout before
+  each start, the same way the stock app does, so no action is needed; it is
+  called out only because it looked like a dead board.
 - **Unknown:** Gen 7 / iFit 2.0. Reported not to work, untested here.
 - **Required:** an Android console you can reach with `adb`.
 
