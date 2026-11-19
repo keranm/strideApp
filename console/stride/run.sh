@@ -44,14 +44,28 @@ case "${1:-}" in
   *)       if [ -n "$KEYSTORE" ] && [ -f "$KEYSTORE" ]; then VARIANT=release; else VARIANT=debug; fi ;;
 esac
 
+# Which web engine. `classic` (default) renders through the console's own System
+# WebView and is correct for Gen 6 consoles. `gecko` bundles GeckoView for
+# consoles whose WebView is too old (the Elite 900, Android 7). Select it with:
+#     STRIDE_ENGINE=gecko ./run.sh
+ENGINE="${STRIDE_ENGINE:-classic}"
+case "$ENGINE" in
+  classic|gecko) ;;
+  *) echo "FAILED: STRIDE_ENGINE must be 'classic' or 'gecko', not '$ENGINE'" >&2; exit 1 ;;
+esac
+# assemble<Flavor><Variant>, e.g. assembleClassicRelease, assembleGeckoDebug.
+cap() { printf '%s' "$(echo "${1:0:1}" | tr '[:lower:]' '[:upper:]')${1:1}"; }
+TASK="assemble$(cap "$ENGINE")$(cap "$VARIANT")"
+OUT="$HERE/app/build/outputs/apk/$ENGINE/$VARIANT/app-$ENGINE-$VARIANT.apk"
+
 if [ "$VARIANT" = "release" ]; then
-  echo ">>> building (release, signed)"
-  ./gradlew --quiet --console=plain assembleRelease
-  APK="$HERE/app/build/outputs/apk/release/app-release.apk"
+  echo ">>> building $ENGINE (release, signed)"
+  ./gradlew --quiet --console=plain "$TASK"
+  APK="$OUT"
   if [ ! -f "$APK" ]; then
     # An unsigned APK is what you get when the keystore properties are missing
     # or wrong. adb will refuse it, so say why here rather than there.
-    UNSIGNED="$HERE/app/build/outputs/apk/release/app-release-unsigned.apk"
+    UNSIGNED="${OUT%.apk}-unsigned.apk"
     if [ -f "$UNSIGNED" ]; then
       echo "FAILED: release build is unsigned — check the stride.keystore.* lines" >&2
       echo "        in local.properties. See app/build.gradle.kts." >&2
@@ -59,9 +73,9 @@ if [ "$VARIANT" = "release" ]; then
     fi
   fi
 else
-  echo ">>> building (debug)"
-  ./gradlew --quiet --console=plain assembleDebug
-  APK="$HERE/app/build/outputs/apk/debug/app-debug.apk"
+  echo ">>> building $ENGINE (debug)"
+  ./gradlew --quiet --console=plain "$TASK"
+  APK="$OUT"
 fi
 
 [ -f "$APK" ] || { echo "FAILED: no APK at $APK"; exit 1; }

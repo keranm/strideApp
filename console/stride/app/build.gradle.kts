@@ -20,7 +20,9 @@ fun secret(key: String, fallback: String = "") =
 
 android {
     namespace = "dev.stride.hud"
-    compileSdk = 34
+    // 35 (not 34) because GeckoView's androidx.core:1.16.0 compiles against 35.
+    // Compile-time only; targetSdk stays 28, so runtime behaviour is unchanged.
+    compileSdk = 35
 
     buildFeatures { buildConfig = true }
 
@@ -37,6 +39,33 @@ android {
         buildConfigField("String", "MQTT_BROKER", secret("mqtt.broker", ""))
         buildConfigField("String", "MQTT_USER", secret("mqtt.user"))
         buildConfigField("String", "MQTT_PASS", secret("mqtt.pass"))
+    }
+
+    /*
+     * Which web engine renders the UI.
+     *
+     *   classic — the console's own Android System WebView (default). Correct
+     *             for Gen 6 consoles (the confirmed C 1750), which ship a
+     *             current WebView. Small APK, no bundled engine.
+     *
+     *   gecko   — Mozilla GeckoView, bundled into the APK, for consoles whose
+     *             System WebView is too old to run the UI. The confirmed case
+     *             is the NordicTrack Elite 900 (NTL89121): Android 7.0 with
+     *             WebView 51 (2016), which cannot parse the UI's `??`. GeckoView
+     *             143 is the last release supporting Android 7 (minSdk 21).
+     *             arm64-only to keep the APK near 100 MB rather than ~290.
+     */
+    flavorDimensions += "engine"
+    productFlavors {
+        create("classic") { dimension = "engine"; isDefault = true }
+        create("gecko") {
+            dimension = "engine"
+            // The reason this flavor exists: reach consoles older than the
+            // classic floor. The confirmed one is the Elite 900 on Android 7.0
+            // (API 24). classic keeps minSdk 28; only gecko drops to 24.
+            minSdk = 24
+            ndk { abiFilters += "arm64-v8a" }
+        }
     }
     /*
      * A release build is what belongs on a treadmill.
@@ -111,4 +140,14 @@ dependencies {
     // Plain Java Paho client — the Android "service" variant needs AndroidX,
     // which this app deliberately avoids.
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
+    // gecko flavor only. 143 is the last line with minSdk 21 (Android 5);
+    // 144 raised it to 26 (Android 8), which would drop the Elite 900.
+    "geckoImplementation"("org.mozilla.geckoview:geckoview:143.0.20251003115653")
+
+    // Local JVM unit tests. FitPro is pure framing/encoding with no Android or
+    // I/O deps, so its whole contract is testable off-device with plain JUnit —
+    // no Robolectric, no instrumentation, no AndroidX (which this app avoids).
+    // Run: ./gradlew testClassicDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }

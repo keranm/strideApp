@@ -34,21 +34,44 @@ subscription.
 
 ## Step 0. Check your treadmill
 
-STRIDE is confirmed on one machine:
+STRIDE is confirmed on two machines:
 
-| | |
-|---|---|
-| Model | NordicTrack C 1750 |
-| Generation | Gen 6, the "CLASSIC" embedded console |
-| GlassOS | 8.51.7.1070 |
-| System version | EKA2_20221110 |
-| Firmware | 84.121 |
-| Motor board | FitPro, device id `0x04` |
-| Ranges reported | incline -3 to +12 %, speed 1.6 to 20 km/h |
+| | Gen 6 | Older console |
+|---|---|---|
+| Model | NordicTrack C 1750 | NordicTrack Elite 900 (NTL89121) |
+| Console | Gen 6 "CLASSIC" | J1002, MediaTek MT8163 |
+| Android | 9 (`EKA2_20221110`) | 7.0 (`argon_20180915`) |
+| Motor board | FitPro, device `0x04` | FitPro, VID `0x213C`/PID `0x0002` |
+| Ranges reported | incline -3 to +12 %, speed 1.6 to 20 km/h | incline 0 to 12 %, speed 0.8 to 19.3 km/h |
+| Web engine | **classic** (System WebView) | **gecko** (bundled GeckoView) |
 
 - **Likely to work:** other Gen 6 NordicTrack and ProForm consoles on a FitPro board.
+- **Older consoles** (Android 7, like the Elite 900) work too, but only with the
+  **gecko** build — see [Which engine](#which-engine).
+- **Cold-start interlock:** some boards (confirmed on the Elite 900) set an
+  "idle-mode lockout" that refuses every software start while the console has
+  idled out — the belt simply won't begin. STRIDE now clears that lockout before
+  each start, the same way the stock app does, so no action is needed; it is
+  called out only because it looked like a dead board.
 - **Unknown:** Gen 7 / iFit 2.0. Reported not to work, untested here.
 - **Required:** an Android console you can reach with `adb`.
+
+### Which engine
+
+The UI is built for a 2020-era browser. Consoles vary in how old their Android
+System WebView is, so STRIDE builds in two flavors:
+
+- **classic** (default) — renders through the console's own System WebView.
+  Correct for Gen 6 consoles, which ship a current-enough WebView. Small APK.
+- **gecko** — bundles Mozilla GeckoView (~100 MB, arm64) as its own browser
+  engine, for consoles whose System WebView is too old. The Elite 900 is on
+  Android 7 with WebView 51 (2016), which cannot parse the UI and shows a blank
+  screen; gecko is the fix.
+
+To check your WebView: **Settings → Apps → Android System WebView**, read the
+version. 83 or newer, use **classic**. Older, or a blank screen on classic, use
+**gecko**. GeckoView 143 is the last line that supports Android 7, so this is a
+dead end only below Android 5.
 
 What you can check right now, on the console's own screen:
 
@@ -164,10 +187,12 @@ Do not turn USB debugging off afterwards.
 5. Installs STRIDE if you have built it, and sets it as the home app.
 
 Run it with `STRIDE_KIOSK=0` to skip step 5. The script prints the command that
-undoes the home-app change.
+undoes the home-app change. It installs whichever flavor you built; set
+`STRIDE_ENGINE=gecko` if that is the one you want (default `classic`).
 
 ```sh
-./tools/unchain.sh
+./tools/unchain.sh                      # classic
+STRIDE_ENGINE=gecko ./tools/unchain.sh  # gecko
 ```
 
 > The console's USB port is the link to the motor board, so Wi-Fi ADB is
@@ -201,9 +226,13 @@ Two ways in. They end at the same screen, so take whichever suits — but read
 the last paragraph before picking, because moving between them later costs you
 your settings.
 
+> **gecko has no published APK yet.** The releases below are **classic**. For an
+> old console (Android 7), build the gecko flavor yourself — Option B.
+
 #### Option A — install the released APK
 
-Nothing to build. You need `adb`, which you already have from step 1.4.
+Nothing to build. You need `adb`, which you already have from step 1.4. These are
+**classic** builds; for **gecko**, use Option B.
 
 Download the APK from
 [the latest release](https://github.com/keranm/strideApp/releases/latest), then:
@@ -233,11 +262,20 @@ You need JDK 17 and the Android SDK.
 
 ```sh
 cd console/stride
-./run.sh
+./run.sh                      # classic (System WebView)
+STRIDE_ENGINE=gecko ./run.sh  # gecko (bundled GeckoView, for old consoles)
 ```
 
 `run.sh` builds, installs, launches, and tails the log. It finds the Android
-SDK via `ANDROID_HOME` or `~/Library/Android/sdk`.
+SDK via `ANDROID_HOME` or `~/Library/Android/sdk`. `STRIDE_ENGINE` selects the
+flavor (default `classic`); see [Which engine](#which-engine). The first gecko
+build downloads GeckoView (~290 MB) from Mozilla's Maven, and the gecko APK is
+arm64-only.
+
+The two flavors are different apps to Android only in build; they share an
+application id, so installing one over the other works, but a debug build of one
+over a release build of the other hits the signature mismatch in [the box
+below](#pick-one-and-stay-on-it).
 
 **Read what it prints.** Without a signing key in `local.properties` it builds
 a *debug* APK and says so. A debug build is `debuggable`, which lets anything
