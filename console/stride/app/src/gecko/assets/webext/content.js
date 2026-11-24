@@ -10,8 +10,8 @@
  *   2. Relay: page command events -> background port -> Kotlin, and
  *      Kotlin pushes (getter data, render/plan/coach calls) -> page events.
  *
- * The five getters return the last snapshot Kotlin pushed; everything else is a
- * fire-and-forget command. This mirrors exactly what the UI consumes (only
+ * The getters return the last snapshot Kotlin pushed. Adding a person waits
+ * for that snapshot to confirm the new entry. This mirrors exactly what the UI consumes (only
  * routes/availableUis/currentUi/settingsJson/wakeState are read synchronously).
  */
 'use strict';
@@ -25,7 +25,12 @@ var SHIM = '(' + function () {
     } catch (e) {}
   }
   window.addEventListener('stride:data', function (e) {
-    try { var d = JSON.parse(e.detail); for (var k in d) data[k] = d[k]; } catch (_) {}
+    try {
+      var d = JSON.parse(e.detail);
+      var settingsChanged = 'settingsJson' in d && d.settingsJson !== data.settingsJson;
+      for (var k in d) data[k] = d[k];
+      if (settingsChanged) document.dispatchEvent(new CustomEvent('stride-people-changed'));
+    } catch (_) {}
   });
   window.addEventListener('stride:call', function (e) {
     try {
@@ -58,6 +63,24 @@ var SHIM = '(' + function () {
     fan: function () { cmd('fan', []); },
     setFan: function (l) { cmd('setFan', [l]); },
     setWalker: function (n) { cmd('setWalker', [n]); },
+    addPerson: function (name) {
+      return new Promise(function (resolve, reject) {
+        function confirmed() {
+          var raw = data.settingsJson;
+          var people = JSON.parse(raw).people || [];
+          if (!people.some(function (p) { return p.name === name; })) return;
+          clearTimeout(timeout);
+          document.removeEventListener('stride-people-changed', confirmed);
+          resolve(raw);
+        }
+        var timeout = setTimeout(function () {
+          document.removeEventListener('stride-people-changed', confirmed);
+          reject(new Error('Profile was not saved'));
+        }, 5000);
+        document.addEventListener('stride-people-changed', confirmed);
+        cmd('addPerson', [name]);
+      });
+    },
     ackDmk: function () { cmd('ackDmk', []); },
     hushCoach: function () { cmd('hushCoach', []); },
     setUi: function (n) { cmd('setUi', [n]); },
