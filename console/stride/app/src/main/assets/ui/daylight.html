@@ -558,13 +558,14 @@ function buildPeople(){
   STRIDE.profiles().forEach(name => {
     const b = document.createElement('button');
     b.className = 'card';
-    b.innerHTML = '<span class="nm">' + name + '</span>';
+    b.innerHTML = '<span class="nm">' + STRIDE.esc(name) + '</span>';
     tap(b, () => flow.setProfile(name));
     $('people').appendChild(b);
   });
 }
 buildPeople();
 document.addEventListener('stride-settings-closed', buildPeople);
+document.addEventListener('stride-people-changed', buildPeople);
 
 STRIDE.DURATIONS.forEach(m => {
   const b = document.createElement('button');
