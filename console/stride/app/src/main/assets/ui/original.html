@@ -707,8 +707,8 @@ function buildPeople(){
   names.forEach(name => {
     const b = document.createElement('button');
     b.className = 'pick who';
-    b.innerHTML = '<span class="initial">' + name[0].toUpperCase() + '</span>' +
-                  '<span class="name">' + name + '</span>';
+    b.innerHTML = '<span class="initial">' + STRIDE.esc(name[0].toUpperCase()) + '</span>' +
+                  '<span class="name">' + STRIDE.esc(name) + '</span>';
     tap(b, () => pickWalker(name));
     box.appendChild(b);
   });
@@ -938,6 +938,7 @@ tap($('btnSettings'), () => STRIDE_SETTINGS.open());
    stale is the one thing it must not be — a name it shows that Settings does
    not have is a walker with no coaching and no history. */
 document.addEventListener('stride-settings-closed', buildPeople);
+document.addEventListener('stride-people-changed', buildPeople);
 if ($('btnUiClose')) tap($('btnUiClose'), () => STRIDE_SETTINGS.close());
 
 /* The leftmost button changes job with the phase. Choosing a workout is what

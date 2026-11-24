@@ -542,8 +542,8 @@
         // knows? Somebody with no link is not broken — they simply only exist
         // here, and saying so is better than leaving it to be guessed.
         bits.push(p.ha_person ? 'linked' : 'console only');
-        c.innerHTML = '<div class="sx-av">' + p.name.charAt(0).toUpperCase() + '</div>' +
-                      '<div class="sx-pn">' + p.name + '</div>' +
+        c.innerHTML = '<div class="sx-av">' + global.STRIDE.esc(p.name.charAt(0).toUpperCase()) + '</div>' +
+                      '<div class="sx-pn">' + global.STRIDE.esc(p.name) + '</div>' +
                       '<div class="sx-pd">' + bits.join(' · ') + '</div>';
         press(c, function () { editPerson(p); });
         list.appendChild(c);
@@ -572,13 +572,37 @@
       input.setAttribute('maxlength', '20');
       input.setAttribute('autocomplete', 'off');
 
-      var commit = function () {
-        var name = input.value.trim();
-        if (!name) return;
-        try { S = JSON.parse(bridge().addPerson(name)); } catch (e) {}
-        detail.innerHTML = '';
-        drawPeople(); drawDefault(); drawHa();
-      };
+      var add = el('button', 'sx-pill sx-go', 'ADD');
+      var status = el('div', 'sx-d');
+      status.setAttribute('role', 'status');
+      press(add, function () {
+        var name = input.value.trim().slice(0, 20);
+        if (!name || add.disabled) return;
+        if ((load().people || []).some(function (p) { return p.name.toLowerCase() === name.toLowerCase(); })) {
+          status.textContent = 'That name is already in the list.';
+          return;
+        }
+
+        add.disabled = true;
+        add.textContent = 'ADDING';
+        status.textContent = '';
+        Promise.resolve().then(function () {
+          return bridge().addPerson(name);
+        }).then(function (raw) {
+          var saved = JSON.parse(raw);
+          if (!(saved.people || []).some(function (p) { return p.name === name; })) {
+            throw new Error('Profile was not saved');
+          }
+          if (!detail.isConnected) return;
+          S = saved;
+          if (detail.contains(input)) detail.innerHTML = '';
+          drawPeople(); drawDefault(); drawHa();
+        }).catch(function () {
+          add.disabled = false;
+          add.textContent = 'ADD';
+          status.textContent = 'Could not add this person. Try again.';
+        });
+      });
       input.setAttribute('readonly', 'readonly');
       input.sxCapitalise = true;
       input.sxCommit = function () {};
@@ -588,11 +612,12 @@
       wrap.style.cssText = 'display:flex;align-items:center';
       input.style.marginRight = '14px';
       wrap.appendChild(input);
-      wrap.appendChild(press(el('button', 'sx-pill sx-go', 'ADD'), commit));
+      wrap.appendChild(add);
 
       detail.appendChild(row('Their name',
         'Everyone who walks gets their own totals. Coaching and recording are ' +
         'set per person once they are here.', wrap));
+      detail.appendChild(status);
 
       // Straight into the keyboard — the only reason to be on this screen is
       // to type a name.
@@ -603,7 +628,7 @@
        are only three things to change and one of them is "remove". */
     function editPerson(p) {
       detail.innerHTML = '';
-      detail.appendChild(el('div', 'sx-gh', p.name));
+      detail.appendChild(el('div', 'sx-gh', global.STRIDE.esc(p.name)));
       detail.appendChild(row('Home Assistant',
         p.ha_person
           ? 'Linked, so walks recorded here line up with the person Home '
@@ -633,12 +658,12 @@
           try { S = JSON.parse(bridge().setPersonFlag(p.name, 'publish', on)); } catch (e) {}
           p.publish = on; drawPeople();
         })));
-      detail.appendChild(row('Start as ' + p.name,
+      detail.appendChild(row('Start as ' + global.STRIDE.esc(p.name),
         'Assume this person when the belt starts without anyone tapping a name.',
         press(el('button', 'sx-pill', 'MAKE DEFAULT'), function () {
           save('default_walker', p.name); drawPeople(); drawDefault();
         })));
-      detail.appendChild(row('Remove ' + p.name,
+      detail.appendChild(row('Remove ' + global.STRIDE.esc(p.name),
         'Their recorded walks are not deleted.',
         press(el('button', 'sx-pill sx-warn', 'REMOVE'), function () {
           try { S = JSON.parse(bridge().removePerson(p.name)); } catch (e) {}
@@ -687,7 +712,7 @@
     function drawDefault() {
       defRow.innerHTML = '';
       var opts = [['', 'Ask every time']];
-      (S.people || []).forEach(function (p) { opts.push([p.name, p.name]); });
+      (S.people || []).forEach(function (p) { opts.push([p.name, global.STRIDE.esc(p.name)]); });
       defRow.appendChild(row('Start as', 'Who the welcome screen assumes.',
         segment('default_walker', opts, S.default_walker || '', function () { drawPeople(); })));
     }

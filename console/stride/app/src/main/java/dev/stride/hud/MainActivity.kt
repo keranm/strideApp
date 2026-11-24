@@ -16,7 +16,6 @@ import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
-import android.webkit.WebView
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -412,7 +411,7 @@ class MainActivity : Activity() {
         val SPEED_PROBE = listOf(FitPro.Field.RPM, FitPro.Field.ACTUAL_KPH)
     }
 
-    private lateinit var web: WebView
+    private lateinit var host: WebHost
 
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
@@ -1612,8 +1611,6 @@ class MainActivity : Activity() {
         return if (available().contains(saved)) saved else DEFAULT_UI
     }
 
-    private fun assetFor(name: String) = "file:///android_asset/ui/$name.html"
-
     /** Both routes in — a tap on the settings screen and a publish from HA —
      *  land here, so neither can switch under conditions the other refuses. */
     private fun switchUi(name: String) {
@@ -1629,7 +1626,7 @@ class MainActivity : Activity() {
         prefs.edit().putString(PREF_UI, name).apply()
         Log.i(TAG, "ui: switching to $name")
         mqtt.publishUi(name)
-        runOnUiThread { web.loadUrl(assetFor(name)) }
+        host.loadUi(name)
     }
 
     /**
@@ -2209,18 +2206,8 @@ class MainActivity : Activity() {
         return (accumulatedMs + live) / 1000.0
     }
 
-    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Lets the HUD be inspected and driven from a laptop over adb, so
-        // layout can be checked against fake state without arming the belt.
-        //
-        // Debug builds only. The DevTools socket this opens will execute
-        // anything in the page's context — including the `Stride` bridge,
-        // which is to say the belt — for whoever can reach it. That is a fair
-        // trade on a bench and no trade at all on a treadmill in a hallway.
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
         cfg.seedFromBuildConfig()
         walker = cfg.defaultWalker()
@@ -2231,27 +2218,13 @@ class MainActivity : Activity() {
         val ui = chosenUi()
         Log.i(TAG, "ui: $ui (available: ${available().joinToString(", ")})")
 
-        web = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            /* The launch screen's field colour, not Original's navy. The
-               WebView paints this before the document does, so it is the one
-               frame between the splash and the UI — matching it makes the
-               handover invisible. Navy was only ever right for one of the five
-               interfaces. */
-            setBackgroundColor(0xFF100F0E.toInt())
-            addJavascriptInterface(Bridge(), "Stride")
-            /* A UI switch reloads the page, and the plan is the one thing sent
-               once rather than at poll rate — so it has to go over again or the
-               new document draws a guided walk with no ground ahead of it. */
-            webViewClient = object : android.webkit.WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (planSteps.isNotEmpty()) pushPlan()
-                }
-            }
-            loadUrl(assetFor(ui))
-        }
-        setContentView(web)
+        /* The engine is chosen by the product flavor; see WebHost. The `onReady`
+           callback fires when a page finishes loading: a UI switch reloads the
+           page, and the plan is the one thing sent once rather than at poll
+           rate, so it has to go over again or the new document draws a guided
+           walk with no ground ahead of it. */
+        host = buildWebHost(this, Bridge(), ui) { if (planSteps.isNotEmpty()) pushPlan() }
+        setContentView(host.view)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -2376,7 +2349,7 @@ class MainActivity : Activity() {
     }
 
     private fun showCoach(json: String) {
-        runOnUiThread { web.evaluateJavascript("window.coach($json)", null) }
+        host.callJs("coach", json)
     }
 
     /**
@@ -2474,6 +2447,24 @@ class MainActivity : Activity() {
              * not act on a speed write while the console is IDLE. Mode first,
              * then the speed it enables — and if the mode is refused, the
              * speed is still queued rather than lost with it. */
+            // Clear the belt's cold-start interlock before any write that puts
+            // the board into a running state. The board sets IDLE_MODE_LOCKOUT=1
+            // whenever it idles out (see FitPro.Field.IDLE_MODE_LOCKOUT), and
+            // while it is 1 every WorkoutMode=running write from IDLE is refused
+            // (status:failed) — which is what stopped the belt starting. iFit
+            // unlocks it the same way on its workout flow. We send it in its own
+            // frame first (the board accepts the config write while still idle),
+            // then the mode write below starts the belt. pendingWrite is
+            // one-shot, so this fires once per start, not every poll.
+            pendingWrite?.get(FitPro.Field.WORKOUT_MODE)?.toInt()?.let { m ->
+                if (m == FitPro.Mode.RUNNING || m == FitPro.Mode.WARM_UP || m == FitPro.Mode.RESUME) {
+                    val lr = conn.exchange(FitPro.readWrite(deviceId, emptyList(),
+                            mapOf(FitPro.Field.IDLE_MODE_LOCKOUT to 0.0)))
+                    Log.i(TAG, "belt start: cleared IDLE_MODE_LOCKOUT -> " +
+                            (lr?.let { FitPro.rejectReason(it, emptyList()) ?: "ok" } ?: "no reply"))
+                }
+            }
+
             var queued = pendingWrite
             var rest: Map<FitPro.Field, Double>? = null
             if (queued != null && queued.size > 1 &&
@@ -3123,14 +3114,12 @@ class MainActivity : Activity() {
     }
 
     private fun pushPlan() {
-        val json = planJson()
-        runOnUiThread { web.evaluateJavascript("window.plan($json)", null) }
+        host.callJs("plan", planJson())
     }
 
     /** Hand a state snapshot to the page. */
     private fun push(s: Snapshot) {
-        val json = s.toJson()
-        runOnUiThread { web.evaluateJavascript("window.render($json)", null) }
+        host.callJs("render", s.toJson())
     }
 
     /**
@@ -3459,6 +3448,7 @@ class MainActivity : Activity() {
         voice.close()
         mqtt.close()
         conn.close()
+        if (::host.isInitialized) host.destroy()
         try { unregisterReceiver(permissionReceiver) } catch (_: IllegalArgumentException) {}
         super.onDestroy()
     }

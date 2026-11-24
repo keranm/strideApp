@@ -153,7 +153,18 @@ object FitPro {
            for. Read once at startup and logged — see MainActivity's
            readSleepConfig. */
         IDLE_TIMEOUT(34, 2, 1.0, false, false, "Idle timeout", "s"),
-        IDLE_MODE_LOCKOUT(95, 1, 1.0, false, false, "Idle lockout", ""),
+        /* The belt's cold-start interlock (ICON BitField IdleModeLockout).
+           A 1-byte bool. When 1, the board refuses every software
+           WorkoutMode=running write from IDLE (status:failed, 04 05 02 04 0F) —
+           the belt cannot be started in software. When 0, it can. The board
+           sets it to 1 whenever it idles out (after IDLE_TIMEOUT), so a machine
+           left sitting relocks itself. iFit manages it explicitly:
+           SetIdleModeLockout(true) at init, then false on the workout flow for
+           aerobic machines (treadmills). So it is WRITABLE here, and MainActivity
+           clears it (=0) before any belt-starting write — this is what lets the
+           Elite 900 (and any board that relocks on idle) start the belt in pure
+           software. Found by decompiling the stock console app. */
+        IDLE_MODE_LOCKOUT(95, 1, 1.0, false, true, "Idle lockout", ""),
         // FanState: 0 Off, 1 Low, 2 Medium, 3 High, 4 Auto
         FAN_STATE(98, 1, 1.0, false, true, "Fan", ""),
         SLEEP_TIMER_STATE(107, 1, 1.0, false, false, "Sleep timer", ""),
